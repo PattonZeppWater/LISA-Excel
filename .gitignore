@@ -1,0 +1,7 @@
+# Excel lock/temp files
+~$*.xlsm
+~$*.xlsx
+
+# OS / editor noise
+Thumbs.db
+.DS_Store
