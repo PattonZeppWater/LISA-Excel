@@ -323,6 +323,20 @@ def generate():
         "validation":   validations if n_sheets > 1 else (validations[0] if validations else None),
     }
 
+    # Remember this conduit's Drawing Properties Description 1/2/3 (Conduit name /
+    # Source Name 1 / Destination Name 1) for every sheet just written, so the .wdp
+    # writer -- which rebuilds its drawing list from scratch from whatever .dwgs are on
+    # disk -- can still label this conduit's drawing(s) on a LATER /generate call for a
+    # different conduit.
+    if not errors and out_paths:
+        wdp_writer.record_dwg_descriptions(
+            output_folder,
+            [os.path.basename(p) for p in out_paths],
+            desc1=conduit_data.get("Cdt_Name"),
+            desc2=conduit_data.get("Src_Name01"),
+            desc3=conduit_data.get("Dst_Name01"),
+        )
+
     # Write/refresh the AutoCAD Electrical project file(s) in the output folder, named after
     # the project number. Best-effort: never let a project-file problem fail the generation.
     if not errors and project_number:
