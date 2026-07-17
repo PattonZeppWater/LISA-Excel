@@ -1,0 +1,11 @@
+flask
+flask-cors
+python-dotenv
+openpyxl
+jsonschema
+python-docx
+lxml
+pypdf
+pywin32
+requests
+pywebview

@@ -1,0 +1,8 @@
+flask
+flask-cors
+python-dotenv
+python-docx
+lxml
+pypdf
+docx2pdf
+pywin32

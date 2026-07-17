@@ -1,0 +1,7 @@
+{
+  "_comment": "IDP Generation service configuration. All values overridable via environment variables.",
+  "output": {
+    "default_folder": "",
+    "filename_template": "{Cond_Tag}.dwg"
+  }
+}

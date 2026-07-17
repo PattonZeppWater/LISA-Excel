@@ -1,6 +1,20 @@
+# Secrets - never commit credential files
+.env
+*.env
+!*.env.example
+
 # Excel lock/temp files
 ~$*.xlsm
 ~$*.xlsx
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Node / frontend build tooling
+node_modules/
+Frontend/frontend/dist/
 
 # OS / editor noise
 Thumbs.db

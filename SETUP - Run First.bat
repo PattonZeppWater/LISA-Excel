@@ -1,0 +1,90 @@
+@echo off
+setlocal enabledelayedexpansion
+title LISA Setup
+cd /d "%~dp0LISA"
+echo ============================================================
+echo    LISA Setup  -  run this ONCE  (needs internet)
+echo ============================================================
+echo.
+
+REM --- 1. look for an already-installed Python 3.10-3.12 -------
+echo [1/4] Looking for Python 3.10-3.12 ...
+set "PYEXE="
+for %%V in (3.12 3.11 3.10) do (
+  if not defined PYEXE (
+    py -%%V -c "import sys" >nul 2>&1 && set "PYEXE=py -%%V"
+  )
+)
+if not defined PYEXE (
+  for /f "delims=" %%P in ('python -c "import sys;print('%%d.%%d'%%sys.version_info[:2])" 2^>nul') do set "PYVER=%%P"
+  if defined PYVER (
+    echo !PYVER!| findstr /r "^3\.1[012]$" >nul && set "PYEXE=python"
+  )
+)
+
+REM --- 2. if none found, download + silently install Python 3.12 ---
+if not defined PYEXE (
+  echo       No compatible Python found - downloading Python 3.12 ...
+  set "PYINST=%TEMP%\lisa_python312_setup.exe"
+  set "PYURL=https://www.python.org/ftp/python/3.12.8/python-3.12.8-amd64.exe"
+  del "!PYINST!" >nul 2>&1
+  curl -L -s -o "!PYINST!" "!PYURL!"
+  if not exist "!PYINST!" (
+    echo       ^(curl unavailable - trying PowerShell^) ...
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "try{[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12;Invoke-WebRequest -Uri '!PYURL!' -OutFile '!PYINST!'}catch{exit 1}"
+  )
+  if not exist "!PYINST!" (
+    echo.
+    echo   ERROR: could not download Python. Check your internet / proxy,
+    echo   or install Python 3.12 manually from https://www.python.org/downloads/
+    echo   ^(tick "Add python.exe to PATH"^) then run this file again.
+    pause
+    exit /b 1
+  )
+  echo       Installing Python 3.12 ^(silent, no admin needed^) ...
+  "!PYINST!" /quiet InstallAllUsers=0 PrependPath=1 Include_launcher=1 Include_pip=1
+  del "!PYINST!" >nul 2>&1
+  REM PATH isn't refreshed in this window, so point at the just-installed python.exe directly
+  if exist "%LOCALAPPDATA%\Programs\Python\Python312\python.exe" (
+    set "PYEXE=%LOCALAPPDATA%\Programs\Python\Python312\python.exe"
+  ) else if exist "%ProgramFiles%\Python312\python.exe" (
+    set "PYEXE=%ProgramFiles%\Python312\python.exe"
+  )
+)
+
+if not defined PYEXE (
+  echo.
+  echo   ERROR: Python still not available after install.
+  echo   Please RESTART your PC and run this file again.
+  pause
+  exit /b 1
+)
+echo       Using: !PYEXE!
+echo.
+
+REM --- 3. create the virtual environment ----------------------
+echo [2/4] Creating the virtual environment ...
+echo !PYEXE!| findstr "\\" >nul
+if errorlevel 1 (
+  !PYEXE! -m venv .venv
+) else (
+  "!PYEXE!" -m venv .venv
+)
+if not exist ".venv\Scripts\python.exe" (
+  echo   ERROR: could not create the environment ^(need Python 3.12^).
+  pause
+  exit /b 1
+)
+
+REM --- 4. install dependencies --------------------------------
+echo [3/4] Installing dependencies ^(a few minutes^) ...
+".venv\Scripts\python.exe" -m pip install --upgrade pip
+".venv\Scripts\python.exe" -m pip install -r requirements.txt
+".venv\Scripts\python.exe" ".venv\Scripts\pywin32_postinstall.py" -install >nul 2>&1
+
+echo [4/4] Done.
+echo.
+echo ============================================================
+echo    Setup complete!  Now double-click  "LAUNCH LISA.bat"
+echo ============================================================
+pause
