@@ -300,13 +300,18 @@ def _split_gauge(v):
 
 def _with_awg(size) -> str | None:
     """Format a wire gauge for the conduit fill TABLE:
-       AWG sizes   -> '#<size>AWG'   ('10' -> '#10AWG', '3/0' -> '#3/0AWG')
+       AWG sizes   -> '#<size>AWG'   ('10' -> '#10AWG')
+       AWG aught   -> '#<size>'      ('3/0' -> '#3/0', '1/0' -> '#1/0') -- no 'AWG' suffix
        KCMIL sizes -> '<size>KCMIL'  (no '#', no 'AWG'; '300 KCMIL' -> '300KCMIL')
        text gauges (FIBER) / N/A / blanks are left exactly as typed."""
     kind, core = _split_gauge(size)
     if kind == "KCMIL":
         return f"{core}KCMIL"
     if kind == "AWG":
+        # Aught sizes (1/0, 2/0, 3/0, 4/0) are written WITHOUT the 'AWG' suffix so the
+        # table matches the wire label -- e.g. '3/0' -> '#3/0' in both places.
+        if "/" in core:
+            return f"#{core}"
         return f"#{core}AWG"
     return size
 

@@ -28,6 +28,12 @@ def test_with_awg_already_hashed():
 def test_with_awg_already_awg_unchanged():
     assert wm._with_awg("#10AWG") == "#10AWG"
 
+def test_with_awg_aught_no_suffix():
+    # Aught sizes (1/0..4/0) drop the 'AWG' suffix so the table matches the wire label.
+    assert wm._with_awg("3/0") == "#3/0"
+    assert wm._with_awg("1/0") == "#1/0"
+    assert wm._with_awg("#4/0") == "#4/0"
+
 def test_with_awg_text_gauge_unchanged():
     assert wm._with_awg("FIBER") == "FIBER"
 
