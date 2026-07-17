@@ -191,11 +191,17 @@ def generate():
     # File suffix appended after the sequence number (default "e", e.g. 56.1077-01e)
     file_suffix    = body.get("file_suffix")
     file_suffix    = "e" if file_suffix is None else str(file_suffix).strip()
+    # "Make it a project": assemble a full AIC project (GENERAL sheets + a sectioned .wdp/.aepx)
+    # instead of just listing the conduit drawings. Requires a project number (names the files).
+    make_project   = bool(body.get("make_project"))
 
     if conduit_ident is None:
         return jsonify({"error": "'conduit_ident' is required"}), 400
     if not output_folder:
         return jsonify({"error": "'output_folder' is required"}), 400
+    if make_project and not project_number:
+        return jsonify({"error": "A project number is required to generate a project. "
+                                 "Enter one in the Project number field or uncheck 'Make it a project'."}), 400
 
     conduit_row = svc_parser.get_conduit_row(conduit_index, int(conduit_ident))
     if conduit_row is None:
@@ -317,12 +323,20 @@ def generate():
         "validation":   validations if n_sheets > 1 else (validations[0] if validations else None),
     }
 
-    # Write/refresh the AutoCAD Electrical project file (.wdp) in the output folder,
-    # named after the project number, listing every generated drawing. Best-effort:
-    # never let a .wdp problem fail the generation.
+    # Write/refresh the AutoCAD Electrical project file(s) in the output folder, named after
+    # the project number. Best-effort: never let a project-file problem fail the generation.
     if not errors and project_number:
-        result["wdp_path"] = wdp_writer.write_project_wdp(
-            output_folder, project_number, project_info=project_desc)
+        if make_project:
+            # Full AIC project: copy the GENERAL template sheets (G1-G3) in, then write a
+            # sectioned .wdp (GENERAL + INTERCONNECTION DIAGRAMS) and a matching .aepx.
+            wdp_writer.ensure_project_sheets(output_folder, project_number)
+            result["wdp_path"]  = wdp_writer.write_full_project_wdp(
+                output_folder, project_number, project_info=project_desc)
+            result["aepx_path"] = wdp_writer.write_project_aepx(output_folder, project_number)
+        else:
+            # Plain drawing list under INTERCONNECTION DIAGRAMS (unchanged behavior).
+            result["wdp_path"] = wdp_writer.write_project_wdp(
+                output_folder, project_number, project_info=project_desc)
 
     return jsonify(result)
 

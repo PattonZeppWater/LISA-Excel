@@ -8,6 +8,27 @@ WHAT THIS IS
   build for you to continue testing the IDP Generation tool.
 
 ------------------------------------------------------------
+IMPORTANT - IF YOU DOWNLOADED / UNZIPPED THIS  (read first)
+------------------------------------------------------------
+  Windows tags anything that arrives by email / download / zip
+  as "from the internet." That makes Excel open the workbook in
+  PROTECTED VIEW (read-only - so Ctrl+V, Ctrl+Z and even typing
+  are disabled) and BLOCKS its macros. If the workbook's keyboard
+  shortcuts or self-fixing behavior "don't work," this is why.
+  Do ONE of these BEFORE opening the workbook:
+
+    EASIEST: put this whole folder in   C:\trusted
+             (a trusted location - Excel then opens it fully
+              editable, with macros on, and no warnings).
+
+    OR: right-click the .zip BEFORE unzipping -> Properties ->
+        tick "Unblock" -> OK, then unzip (clears the mark from
+        every file inside).
+
+    OR: in Excel click "Enable Editing" on the yellow PROTECTED
+        VIEW bar, and "Enable Content" if a macro bar appears.
+
+------------------------------------------------------------
 BEFORE YOU START  (one-time prerequisites)
 ------------------------------------------------------------
   1. Windows 10 or 11.
@@ -42,7 +63,7 @@ USING IT
 ------------------------------------------------------------
   - In LISA, go to the IDP Generation tab.
   - Load the workbook from the "Workbook" folder next to this
-    file:  Dynamic_IDP_Workbook_Zepp,P - Current WIP 2.xlsm
+    file:  IDP_Workbook_CurrentWIP_4.xlsm
   - Pick a conduit and Generate. Make sure AutoCAD is open first.
   - Generated DWGs go to the output folder you choose in LISA.
 

@@ -12,10 +12,17 @@ The project descriptor fields (*[1]..*[8]) are populated from the workbook's
 Engineer / Drafter). The project number also comes in directly from the UI and always
 wins for *[4] (it names the file too).
 """
-import os, glob, re
+import os, glob, re, shutil, uuid
 
 _TMPL_PATH = os.path.join(os.path.dirname(__file__), "idp_project_wdp.tmpl")
 _SUB_LINE  = "=====SUB=INTERCONNECTION DIAGRAMS"
+
+# Bundled AIC project template (cleaned from the "For Claude" folder): the GENERAL sheets
+# G1-G3 + title-block map (.wdl) + drawing template (.wdt). Used only for "make it a project".
+_PROJECT_TMPL_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "_Templates", "Project")
+# GENERAL section sheets kept in the template: (filename suffix, ACADE subsection label)
+_GENERAL_SHEETS = [("G1", "COVER SHEET"), ("G2", "DRAWING INDEX"), ("G3", "SYMBOLS LEGEND")]
+_ICD_SECTION = "INTERCONNECTION DIAGRAMS"   # EQUIPMENT TYPE renamed; conduits live here
 
 # drawing files we should NOT list in the project (AutoCAD side files)
 _SKIP_SUFFIXES = ("_recover.dwg", "_recover000.dwg")
@@ -126,6 +133,120 @@ def write_project_wdp(output_folder: str, project_number: str, dwg_names=None,
         out_path = os.path.join(output_folder, safe + ".wdp")
         with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
             f.write(body)
+        return out_path
+    except Exception:
+        return None
+
+
+# ============================================================================
+# "Make it a project" -- assemble a full AIC project (GENERAL sheets + conduits)
+# ============================================================================
+
+def _safe(project_number: str) -> str:
+    """Filesystem-safe project-number stem (matches the naming used for conduit DWGs)."""
+    return "".join(c for c in (project_number or "") if c.isalnum() or c in "-_. ").strip() or "IDP_Project"
+
+
+def _block(section: str, label: str, dwg: str) -> str:
+    """One drawing entry in a .wdp: =SECTION / ===SUBSECTION / =====SUB=SECTION / file."""
+    return "=%s\r\n===%s\r\n=====SUB=%s\r\n%s\r\n" % (section, label, section, dwg)
+
+
+def _find_template_file(pattern: str):
+    """First file in the bundled Project template dir matching a glob, or None."""
+    hits = sorted(glob.glob(os.path.join(_PROJECT_TMPL_DIR, pattern)))
+    return hits[0] if hits else None
+
+
+def ensure_project_sheets(output_folder: str, project_number: str) -> list:
+    """Copy the GENERAL template sheets (G1-G3) into output_folder renamed to the project
+    number, plus the title-block map (.wdl -> <project>_wdtitle.wdl) and drawing template
+    (.wdt). Copy-if-missing, so it's safe to call once per conduit. Returns the GENERAL dwg
+    names now present. Never raises."""
+    safe = _safe(project_number)
+    general = []
+    try:
+        if not output_folder or not os.path.isdir(output_folder):
+            return general
+        for suf, _label in _GENERAL_SHEETS:
+            src = _find_template_file("*-%s.dwg" % suf)
+            dst_name = "%s-%s.dwg" % (safe, suf)
+            dst = os.path.join(output_folder, dst_name)
+            if src and not os.path.exists(dst):
+                shutil.copyfile(src, dst)
+            if os.path.exists(dst):
+                general.append(dst_name)
+        wdl = _find_template_file("*_wdtitle.wdl") or _find_template_file("*.wdl")
+        if wdl:
+            dst = os.path.join(output_folder, "%s_wdtitle.wdl" % safe)
+            if not os.path.exists(dst):
+                shutil.copyfile(wdl, dst)
+        wdt = _find_template_file("*.wdt")
+        if wdt:
+            dst = os.path.join(output_folder, os.path.basename(wdt))
+            if not os.path.exists(dst):
+                shutil.copyfile(wdt, dst)
+    except Exception:
+        pass
+    return general
+
+
+def write_full_project_wdp(output_folder: str, project_number: str, project_info=None) -> str | None:
+    """Write '<project_number>.wdp' as a full sectioned AIC project: the GENERAL sheets
+    (G1-G3 with COVER SHEET / DRAWING INDEX / SYMBOLS LEGEND labels) followed by every
+    generated conduit drawing under INTERCONNECTION DIAGRAMS. Descriptor fields come from the
+    Project Description sheet. Returns the path or None (never raises)."""
+    try:
+        if not output_folder or not os.path.isdir(output_folder):
+            return None
+        safe = _safe(project_number)
+        body = _load_header(_field_map(project_number, project_info))
+
+        general_names = set()
+        for suf, label in _GENERAL_SHEETS:
+            name = "%s-%s.dwg" % (safe, suf)
+            general_names.add(name.lower())
+            if os.path.exists(os.path.join(output_folder, name)):
+                body += _block("GENERAL", label, name)
+
+        # INTERCONNECTION DIAGRAMS = every other real dwg (the conduits)
+        for dwg in _project_dwgs(output_folder):
+            if dwg.lower() in general_names:
+                continue
+            label = os.path.splitext(dwg)[0]   # conduit sheet name as the subsection label
+            body += _block(_ICD_SECTION, label, dwg)
+
+        out_path = os.path.join(output_folder, safe + ".wdp")
+        with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
+            f.write(body)
+        return out_path
+    except Exception:
+        return None
+
+
+def write_project_aepx(output_folder: str, project_number: str) -> str | None:
+    """Write '<project_number>.aepx' (ACADE project XML) listing every drawing in the folder
+    with sequential FileIDs, so AutoCAD Electrical opens the assembled project. Never raises."""
+    try:
+        if not output_folder or not os.path.isdir(output_folder):
+            return None
+        safe = _safe(project_number)
+        dwgs = _project_dwgs(output_folder)
+        entries = "".join(
+            '<Drawing FilePath="%s" FileID="%d"/>' % (os.path.splitext(d)[0] + ".DWG", i + 1)
+            for i, d in enumerate(dwgs)
+        )
+        xml = (
+            '<?xml version="1.0" encoding="UTF-8"?>\r\n'
+            '<ProjectConfiguration Version="1.0">'
+            '<Project ProjectPath="%s" LocalGUID="%s" EmxFilePath="" EmxGUID=""/>'
+            '<Drawings NextID="%d">%s</Drawings>'
+            '</ProjectConfiguration>\r\n'
+            % (os.path.abspath(output_folder), uuid.uuid4(), len(dwgs) + 1, entries)
+        )
+        out_path = os.path.join(output_folder, safe + ".aepx")
+        with open(out_path, "w", encoding="utf-8", newline="") as f:
+            f.write(xml)
         return out_path
     except Exception:
         return None
