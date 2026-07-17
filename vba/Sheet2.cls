@@ -94,7 +94,7 @@ Public Sub PZ_EnsureTopHeaders()
             .Font.Bold = True
             .Font.ColorIndex = xlAutomatic
             .Font.Size = 11
-            .Interior.Color = RGB(255, 255, 0)
+            .Interior.Color = RGB(238, 242, 246)
             .HorizontalAlignment = xlCenter
         End With
         With Me.Range(Me.Cells(1, 66), Me.Cells(1, 67))
@@ -412,6 +412,13 @@ Private Sub Worksheet_Change(ByVal Target As Range)
         If wlmN > 0 And Target.Row >= 3 And Target.Row <= PZ_LAST_ROW Then
             Application.EnableEvents = False
             PZ_HandleWireLabelPick Target.Row, wlmN, Target
+            'Editing a wire-label cell itself (picking Default/Blank/Custom, or typing
+            'the custom label) used to skip the width fit entirely -- every OTHER edit
+            'in the row routes through a path that calls this, so a column only ever
+            'widened as a side effect of some later, unrelated edit. Column 4 was the
+            'one most likely to be the LAST edit on a row (set after 1-3), so it was
+            'the one that visibly never caught up.
+            Call PZ_FitWireLabels
             Application.EnableEvents = True
             Exit Sub
         End If
@@ -834,6 +841,12 @@ Private Sub PZ_RebuildRows3To11()
     'relative references in the data-validation formulas.
     Call PZ_EnsureValidations(mProcTo)
 
+    'Self-heal the wire-label max-length highlight -- a regular (format-carrying) paste
+    'into the top of the wire-label columns overwrites the destination cells' conditional
+    'formatting with whatever the source had, which shrinks the rule's sqref and leaves
+    'the pasted-over rows never highlighting no matter how long their label gets.
+    Call PZ_EnsureWireLabelCF
+
     'Normalize row-move leftovers: a row with NO Conduit but stray content
     '(orphaned Symbol etc. from a drag/cut move) is wiped to a clean fillable row.
     'Auto instrument-continuation rows (no Conduit by design) are spared.
@@ -852,9 +865,17 @@ Private Sub PZ_RebuildRows3To11()
 
     'One pass over the active region: wipe row-move leftovers (orphaned content with no
     'Conduit) and reformat empties back to a clean fillable row.
-    Dim rf As Long
+    'A row with a valid Wire Ct + an S or D Symbol is legitimate in-progress data (the
+    'Conduit is just filled in later, or the paste that populated the row didn't happen
+    'to include column A) -- the main loop above already formats it correctly, so it must
+    'NOT be wiped here. Without this guard, pasting into a row without including column A
+    'looked identical to a cut/drag leftover and the whole row got silently cleared.
+    Dim rf As Long, rfLoopCt As Long, rfLooksValid As Boolean
     For rf = 3 To cleanTo
-        If Trim$(CStr(Me.Cells(rf, "A").Value)) = "" And Not PZ_RowIsEmpty(rf) And Not PZ_IsAuto(rf) Then
+        rfLoopCt = 0
+        If IsNumeric(Me.Cells(rf, "B").Value) Then rfLoopCt = CLng(Me.Cells(rf, "B").Value)
+        rfLooksValid = PZ_ValidLoop(rfLoopCt) And (Trim$(CStr(Me.Cells(rf, SSYM).Value)) <> "" Or PZ_DSymPresent(rf))
+        If Trim$(CStr(Me.Cells(rf, "A").Value)) = "" And Not PZ_RowIsEmpty(rf) And Not PZ_IsAuto(rf) And Not rfLooksValid Then
             Me.Range("A" & rf & ":BM" & rf).ClearContents
         End If
         If PZ_RowIsEmpty(rf) Then Call PZ_MakeRowFillable(rf)
@@ -955,6 +976,24 @@ Private Sub PZ_SetSymVal(ByVal addr As String, ByVal f As String)
         .IgnoreBlank = True
         .InCellDropdown = True
         .ShowError = False
+    End With
+    On Error GoTo 0
+End Sub
+
+'Rebuild the "wire label too long" conditional format fresh over the whole wire-label
+'pool (BA3:BD500), matching Excel's built-in Light-Red-Fill-Dark-Red-Text preset. A
+'format-carrying paste over the top of this range can leave the destination cells with
+'the SOURCE's formatting (i.e. no rule at all), which shrinks the single rule's sqref --
+'deleting and re-adding it here every rebuild makes it immune to that.
+Private Sub PZ_EnsureWireLabelCF()
+    On Error Resume Next
+    Dim rng As Range
+    Set rng = Me.Range("BA3:BD" & PZ_LAST_ROW)
+    rng.FormatConditions.Delete
+    With rng.FormatConditions.Add(Type:=xlExpression, Formula1:="=LEN(BA3)>WireLabelMaxLen")
+        .Interior.Color = RGB(255, 199, 206)
+        .Font.Color = RGB(156, 0, 6)
+        .StopIfTrue = True
     End With
     On Error GoTo 0
 End Sub
