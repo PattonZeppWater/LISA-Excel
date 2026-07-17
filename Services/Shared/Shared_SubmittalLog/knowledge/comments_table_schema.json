@@ -1,0 +1,43 @@
+{
+  "_description": "Schema for the Review Comments Log tables in SubmittalCoverLetter_Template_20260504.docx",
+  "_source": "Table indices 2-6 (five pre-built comment blocks). Each block is a 9-row x 5-col table.",
+  "table_indices": [2, 3, 4, 5, 6],
+  "max_comments": 5,
+  "rows": {
+    "0": {
+      "purpose": "Comment ID header + Status",
+      "cells": {
+        "0": {"label": "Comment ID", "fill": "comment_id (e.g. 001)", "type": "text"},
+        "3": {"label": "Status", "fill": "status (OPEN or CLOSED)", "type": "sdt", "sdt_tag": "Status"}
+      }
+    },
+    "1": {
+      "purpose": "Document Name — merged row spanning all columns",
+      "cells": {
+        "0": {"label": "Document Name", "fill": "document_name", "type": "sdt", "sdt_tag": "Document Name"}
+      }
+    },
+    "2": {"purpose": "Column headers (fixed, do not modify)"},
+    "3": {
+      "purpose": "AIC initial comment (revision 00)",
+      "cells": {"2": {"label": "(merged response cell)", "fill": "aic_comment", "type": "text"}}
+    },
+    "4": {
+      "purpose": "Reviewer comment (revision 01)",
+      "cells": {"2": {"label": "(merged response cell)", "fill": "reviewer_comment", "type": "text"}}
+    },
+    "5": {
+      "purpose": "AIC response to reviewer (revision 01)",
+      "cells": {"2": {"label": "(merged response cell)", "fill": "aic_response", "type": "text"}}
+    },
+    "6-8": {"purpose": "Empty rows (reserved for additional comment exchanges)"}
+  },
+  "frontend_fields": {
+    "comment_id":       "Auto-generated (001, 002, ...)",
+    "document_name":    "Document name / drawing number being commented on",
+    "status":           "OPEN or CLOSED",
+    "aic_comment":      "AIC initial comment text",
+    "reviewer_comment": "Reviewer response text",
+    "aic_response":     "AIC response to reviewer text"
+  }
+}

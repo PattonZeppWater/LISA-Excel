@@ -1,0 +1,36 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TagDB Config",
+  "type": "object",
+  "required": ["tagdb_config"],
+  "additionalProperties": false,
+  "properties": {
+    "tagdb_config": {
+      "type": "object",
+      "required": ["plc_address_format", "location"],
+      "additionalProperties": false,
+      "properties": {
+        "tag_separator":       { "type": "string", "default": "_" },
+        "tag_prefix":          { "type": "string", "default": "" },
+        "tag_case":            { "type": "string", "enum": ["upper", "lower", "preserve"], "default": "upper" },
+        "plc_address_format":  { "type": "string", "enum": ["AB_ControlLogix", "AB_Micro800", "Siemens_S7300", "Schneider_M340", "none"] },
+        "plc_remote_prefix":   { "type": "string", "default": "" },
+        "scada_address_prefix":{ "type": "string", "default": "" },
+        "location":            { "type": "string", "minLength": 1 },
+        "include_spares":      { "type": "boolean", "default": false },
+        "include_communicated":{ "type": "boolean", "default": true },
+        "type_map": {
+          "type": "object",
+          "default": {},
+          "additionalProperties": { "type": "string", "minLength": 1 },
+          "propertyNames": {
+            "enum": [
+              "DI_Physical", "DO_Physical", "AI_Physical", "AO_Physical",
+              "DI_Communicated", "DO_Communicated", "AI_Communicated", "AO_Communicated"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

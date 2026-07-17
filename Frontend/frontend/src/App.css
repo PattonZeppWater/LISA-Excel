@@ -1,0 +1,467 @@
+/* ── Theme tokens ─────────────────────────────────────────────────────────────
+   DARK is the default (:root). LIGHT overrides via :root[data-theme="light"].
+   Every color role below maps to the original hardcoded dark values so the dark
+   theme is visually unchanged; light values are tuned for contrast on light bg.
+   NOTE: the Home hero is intentionally kept dark in BOTH themes (--hero-*),
+   and per-pillar --accent is set inline in Home.jsx (do not define it here). */
+:root {
+  /* backgrounds */
+  --bg-app: #0b1622;
+  --bg-main: #0d1a28;
+  --bg-panel: #0e1e30;
+  --bg-input: #0d2035;
+  --bg-sidebar: #1a1a2e;
+  --bg-row-alt: #0d1e30;
+  --bg-subtle: #16263d;
+  --bg-subtle-hover: #1c324c;
+  --bg-drag: #1e3a5a;
+  --bg-code: #071220;
+  --bg-thead: #122035;
+  --bg-row-hover: #0f2133;
+
+  /* hero — fixed dark in both themes */
+  --hero-bg: #06101e;
+  --hero-dot: #1e3a5f;
+  --hero-text: #ffffff;
+  --hero-label: #0099dd;
+  --hero-tagline: #7a9bb5;
+
+  /* borders */
+  --border: #1a2e45;
+  --border-strong: #2a4a6a;
+  --border-dash: #3a5a7a;
+  --border-sidebar: #2e3a5a;
+
+  /* text */
+  --text: #c8d8e8;
+  --text-muted: #7ab3d4;
+  --text-label: #7a9bb5;
+  --text-dim: #5a7a9a;
+  --text-faint: #3a5a7a;
+  --text-bright: #ffffff;
+  --text-sidebar: #cdd0d9;
+  --text-sidebar-muted: #7a80a0;
+  --text-sidebar-dev: #4a5070;
+  --text-sidebar-active: #ffffff;
+  --text-danger-muted: #5a4a4a;
+
+  /* accents */
+  --accent: #4a9fd4;
+  --accent-strong: #0099dd;
+  --accent-cyan: #56b6c2;
+
+  /* buttons */
+  --btn-bg: #1a1a2e;
+  --btn-text: #ffffff;
+  --btn-hover: #2e2e50;
+  --btn-disabled-bg: #aaaaaa;
+  --btn-primary-bg: #1e3a5f;
+  --btn-primary-border: #2a5a8a;
+  --btn-primary-hover: #2a4e7a;
+  --btn-primary-disabled-bg: #1a2a3a;
+  --btn-primary-disabled-text: #4a6a85;
+  --btn-primary-disabled-border: #1a3a55;
+
+  /* status */
+  --status-error: #c0392b;
+  --status-error-soft: #c45050;
+  --status-success: #27ae60;
+  --status-success-soft: #4caf7a;
+  --status-warning: #e6a817;
+  --status-red-bright: #ff6666;
+  --status-yellow: #cccc00;
+}
+
+:root[data-theme="light"] {
+  /* backgrounds */
+  --bg-app: #f4f7fb;
+  --bg-main: #ffffff;
+  --bg-panel: #ffffff;
+  --bg-input: #ffffff;
+  --bg-sidebar: #e8eef5;
+  --bg-row-alt: #eef4fa;
+  --bg-subtle: #eef3f9;
+  --bg-subtle-hover: #e0eaf5;
+  --bg-drag: #d3e4f5;
+  --bg-code: #f4f6f9;
+  --bg-thead: #eef3f9;
+  --bg-row-hover: #f0f5fa;
+
+  /* hero — intentionally unchanged (stays dark) */
+
+  /* borders */
+  --border: #c9d8e8;
+  --border-strong: #a9c2da;
+  --border-dash: #a9c2da;
+  --border-sidebar: #d2dceb;
+
+  /* text */
+  --text: #14293e;
+  --text-muted: #3f6389;
+  --text-label: #4a6b8a;
+  --text-dim: #5b7690;
+  --text-faint: #93a7bc;
+  --text-bright: #14293e;
+  --text-sidebar: #2f3a4a;
+  --text-sidebar-muted: #6b7690;
+  --text-sidebar-dev: #9aa0b5;
+  --text-sidebar-active: #14293e;
+  --text-danger-muted: #a56a6a;
+
+  /* accents */
+  --accent: #2f7fb8;
+  --accent-strong: #0077b0;
+  --accent-cyan: #2a8f9e;
+
+  /* buttons */
+  --btn-bg: #dce9f6;
+  --btn-text: #14293e;
+  --btn-hover: #c3dbf1;
+  --btn-disabled-bg: #cfd8e2;
+  --btn-primary-bg: #dce9f6;
+  --btn-primary-border: #a9c2da;
+  --btn-primary-hover: #c3dbf1;
+  --btn-primary-disabled-bg: #eef3f9;
+  --btn-primary-disabled-text: #9fb3c6;
+  --btn-primary-disabled-border: #d3e0ee;
+
+  /* status */
+  --status-error: #c0392b;
+  --status-error-soft: #c0392b;
+  --status-success: #1f9e54;
+  --status-success-soft: #2e9e63;
+  --status-warning: #b07d0a;
+  --status-red-bright: #e03b3b;
+  --status-yellow: #a3a300;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  background: var(--bg-app);
+  color: var(--text);
+}
+
+/* ── App shell ─────────────────────────────────────────────────────────────── */
+.app          { display: flex; min-height: 100vh; }
+.main-content { flex: 1; overflow-y: auto; background: var(--bg-main); }
+
+/* ── Sidebar ────────────────────────────────────────────────────────────────  */
+.sidebar {
+  width: 220px;
+  min-width: 220px;
+  background: var(--bg-sidebar);
+  color: var(--text-sidebar);
+  display: flex;
+  flex-direction: column;
+  padding: 1.25rem 0 2rem 0;
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
+}
+
+.sidebar-brand {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-sidebar-active);
+  text-decoration: none;
+  padding: 0 1.25rem 1.25rem 1.25rem;
+  border-bottom: 1px solid var(--border-sidebar);
+  display: block;
+  letter-spacing: 0.03em;
+}
+
+.tree-root { list-style: none; padding: 0.75rem 0 0 0; }
+.tree-category { margin-bottom: 0.25rem; }
+
+.tree-category-label {
+  display: block;
+  padding: 0.45rem 1.25rem;
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--text-sidebar-muted);
+  user-select: none;
+}
+
+.tree-children {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 0.5rem 0;
+  position: relative;
+}
+
+/* Vertical line running down the left of all children */
+.tree-children::before {
+  content: "";
+  position: absolute;
+  left: 1.75rem;
+  top: 0;
+  bottom: 0.75rem;
+  width: 1px;
+  background: var(--border-sidebar);
+}
+
+.tree-item { position: relative; padding-left: 2.75rem; }
+
+/* Horizontal branch line */
+.tree-item::before {
+  content: "";
+  position: absolute;
+  left: 1.75rem;
+  top: 50%;
+  width: 0.75rem;
+  height: 1px;
+  background: var(--border-sidebar);
+}
+
+/* Clip vertical line after last item */
+.tree-item.last::after {
+  content: "";
+  position: absolute;
+  left: 1.75rem;
+  top: 50%;
+  bottom: 0;
+  width: 1px;
+  background: var(--bg-sidebar);
+}
+
+.tree-btn {
+  display: block;
+  padding: 0.38rem 0.75rem 0.38rem 0;
+  font-size: 0.85rem;
+  color: var(--text-sidebar);
+  text-decoration: none;
+  border-radius: 4px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  transition: color 0.12s;
+}
+.tree-btn:hover  { color: var(--text-sidebar-active); }
+.tree-btn.active { color: var(--text-sidebar-active); font-weight: 600; }
+.tree-btn.dev    { color: var(--text-sidebar-dev); font-style: italic; cursor: default; font-size: 0.8rem; }
+
+/* ── Theme toggle (sidebar footer) ───────────────────────────────────────────  */
+.theme-toggle {
+  margin: auto 1.25rem 0 1.25rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: transparent;
+  color: var(--text-sidebar);
+  border: 1px solid var(--border-sidebar);
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  transition: color 0.12s, border-color 0.12s;
+}
+.theme-toggle:hover { color: var(--text-sidebar-active); border-color: var(--accent); }
+.theme-toggle-icon  { font-size: 0.95rem; line-height: 1; }
+
+/* ── Home page ──────────────────────────────────────────────────────────────  */
+.home { max-width: none; padding: 2rem; }
+
+.home-hero {
+  position: relative;
+  overflow: hidden;
+  background: var(--hero-bg);
+  border-radius: 18px;
+  padding: 3rem 2.5rem;
+  margin-bottom: 1.5rem;
+  color: var(--hero-text);
+  min-height: 300px;
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+}
+
+.hero-art {
+  flex: 1;
+  min-width: 0;
+  width: auto;
+}
+
+.hero-dot-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, var(--hero-dot) 1px, transparent 1px);
+  background-size: 28px 28px;
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.hero-content { position: relative; z-index: 1; flex: 0 0 320px; }
+
+.hero-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--hero-label);
+  margin-bottom: 0.75rem;
+  font-family: "Courier New", monospace;
+}
+
+.hero-title {
+  font-size: 3.8rem;
+  font-weight: 900;
+  line-height: 1;
+  margin-bottom: 1.25rem;
+  letter-spacing: -0.03em;
+}
+
+.hero-title-grad {
+  background: linear-gradient(90deg, #00c9ff 0%, #00e6b3 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.hero-tagline {
+  font-size: 1rem;
+  color: var(--hero-tagline);
+  line-height: 1.7;
+  max-width: 400px;
+  font-style: italic;
+}
+
+.pillars {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.pillar {
+  position: relative;
+  background: var(--bg-panel);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: 10px;
+  padding: 1.4rem 1.25rem 1.4rem 1.4rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 0.9rem;
+  overflow: hidden;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.pillar:hover { box-shadow: 0 0 24px rgba(0, 180, 216, 0.08); border-color: var(--accent); }
+
+.pillar-glow {
+  position: absolute;
+  top: -30px;
+  left: -30px;
+  width: 120px;
+  height: 120px;
+  border-radius: 50%;
+  background: var(--accent);
+  opacity: 0.04;
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.pillar:hover .pillar-glow { opacity: 0.09; }
+
+.pillar-icon  { font-size: 1.5rem; line-height: 1; flex-shrink: 0; margin-top: 0.1rem; }
+.pillar-title { font-size: 0.88rem; font-weight: 700; color: var(--text); margin-bottom: 0.3rem; }
+.pillar-desc  { font-size: 0.78rem; color: var(--text-dim); line-height: 1.55; }
+
+/* ── Shared utility classes ─────────────────────────────────────────────────  */
+.btn {
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  border: none;
+  padding: 0.6rem 1.4rem;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn:hover    { background: var(--btn-hover); }
+.btn:disabled { background: var(--btn-disabled-bg); cursor: not-allowed; }
+
+.btn-primary {
+  background: var(--btn-primary-bg);
+  color: var(--text);
+  border: 1px solid var(--btn-primary-border);
+  padding: 0.45rem 1rem;
+  border-radius: 4px;
+  font-size: 0.88rem;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-primary:hover:not(:disabled) { background: var(--btn-primary-hover); }
+.btn-primary:disabled { background: var(--btn-primary-disabled-bg); color: var(--btn-primary-disabled-text); border-color: var(--btn-primary-disabled-border); cursor: not-allowed; }
+
+.status-msg         { margin-top: 1rem; font-size: 0.88rem; color: var(--text-label); }
+.status-msg.error   { color: var(--status-error); }
+.status-msg.success { color: var(--status-success); }
+.status-msg.warning { color: var(--status-warning); }
+
+/* ── Drop zone (file drag-and-drop target) ─────────────────────────────────  */
+.drop-zone {
+  background: var(--bg-subtle);
+  border: 2px dashed var(--border-dash);
+  border-radius: 8px;
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s;
+  min-height: 110px;
+}
+.drop-zone:hover {
+  background: var(--bg-subtle-hover);
+  border-color: var(--accent);
+}
+.drop-zone.dragging {
+  background: var(--bg-drag);
+  border-color: var(--accent);
+  border-style: solid;
+}
+.drop-zone.has-file {
+  background: var(--bg-subtle);
+  border-color: var(--btn-primary-border);
+  border-style: solid;
+}
+.drop-zone-icon     { font-size: 1.6rem; opacity: 0.7; line-height: 1; }
+.drop-zone-primary  { font-size: 0.85rem; color: var(--text); font-weight: 500; }
+.drop-zone-filename { font-size: 0.85rem; color: var(--text-muted); font-weight: 500; word-break: break-all; }
+.drop-zone-hint     { font-size: 0.75rem; color: var(--text-dim); }
+
+/* ── Loading indicator (small inline spinner + text) ───────────────────────  */
+.loading-indicator {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  background: var(--bg-input);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  width: 190px;
+  box-sizing: border-box;
+}
+.spinner {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: lisa-spin 0.7s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes lisa-spin {
+  to { transform: rotate(360deg); }
+}

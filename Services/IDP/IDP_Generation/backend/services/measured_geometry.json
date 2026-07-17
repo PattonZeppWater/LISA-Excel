@@ -1,0 +1,518 @@
+{
+ "ANT_L": {
+  "below": 0.0,
+  "above": 0.6,
+  "height": 0.6,
+  "vstates": 1
+ },
+ "CB-CB-CB-TB_Round_L": {
+  "below": 1.57,
+  "above": 0.374,
+  "height": 1.944,
+  "vstates": 1
+ },
+ "CB-CB-CB-TB_Square_L": {
+  "below": 1.615,
+  "above": 0.374,
+  "height": 1.99,
+  "vstates": 1
+ },
+ "CB-CB-CB_L": {
+  "below": 1.032,
+  "above": 0.374,
+  "height": 1.407,
+  "vstates": 1
+ },
+ "CB-CB-TB_Round_L": {
+  "below": 1.07,
+  "above": 0.374,
+  "height": 1.444,
+  "vstates": 1
+ },
+ "CB-CB-TB_Square_L": {
+  "below": 1.115,
+  "above": 0.374,
+  "height": 1.49,
+  "vstates": 1
+ },
+ "CB-CB_L": {
+  "below": 0.532,
+  "above": 0.376,
+  "height": 0.908,
+  "vstates": 1
+ },
+ "CB-TB_Round_L": {
+  "below": 0.57,
+  "above": 0.374,
+  "height": 0.944,
+  "vstates": 1
+ },
+ "CB-TB_Square-TB_Round_L": {
+  "below": 1.07,
+  "above": 0.374,
+  "height": 1.444,
+  "vstates": 1
+ },
+ "CB-TB_Square_L": {
+  "below": 0.611,
+  "above": 0.374,
+  "height": 0.985,
+  "vstates": 1
+ },
+ "CB_L": {
+  "below": 0.032,
+  "above": 0.374,
+  "height": 0.407,
+  "vstates": 1
+ },
+ "COAX_L": {
+  "below": 0.225,
+  "above": 0.356,
+  "height": 0.581,
+  "vstates": 1
+ },
+ "Contact_NC_L": {
+  "below": 0.5,
+  "above": 0.08,
+  "height": 0.58,
+  "vstates": 1
+ },
+ "Contact_NO_L": {
+  "below": 0.495,
+  "above": 0.08,
+  "height": 0.575,
+  "vstates": 1
+ },
+ "DISC-DISC-DISC-TB_Round_L": {
+  "below": 1.57,
+  "above": 0.402,
+  "height": 1.972,
+  "vstates": 1
+ },
+ "DISC-DISC-DISC-TB_Square_L": {
+  "below": 1.615,
+  "above": 0.402,
+  "height": 2.017,
+  "vstates": 1
+ },
+ "DISC-DISC-DISC_Fuse-TB_Round_L": {
+  "below": 1.57,
+  "above": 0.402,
+  "height": 1.972,
+  "vstates": 1
+ },
+ "DISC-DISC-DISC_Fuse-TB_Square_L": {
+  "below": 1.615,
+  "above": 0.402,
+  "height": 2.017,
+  "vstates": 1
+ },
+ "DISC-DISC-DISC_Fuse_L": {
+  "below": 1.078,
+  "above": 0.402,
+  "height": 1.48,
+  "vstates": 1
+ },
+ "DISC-DISC-DISC_L": {
+  "below": 1.032,
+  "above": 0.402,
+  "height": 1.434,
+  "vstates": 1
+ },
+ "DISC-DISC-TB_Round_L": {
+  "below": 1.07,
+  "above": 0.402,
+  "height": 1.472,
+  "vstates": 1
+ },
+ "DISC-DISC-TB_Square_L": {
+  "below": 1.115,
+  "above": 0.402,
+  "height": 1.517,
+  "vstates": 1
+ },
+ "DISC-DISC_Fuse-TB_Round_L": {
+  "below": 1.07,
+  "above": 0.402,
+  "height": 1.472,
+  "vstates": 1
+ },
+ "DISC-DISC_Fuse-TB_Square_L": {
+  "below": 1.115,
+  "above": 0.402,
+  "height": 1.517,
+  "vstates": 1
+ },
+ "DISC-DISC_Fuse_L": {
+  "below": 0.578,
+  "above": 0.398,
+  "height": 0.976,
+  "vstates": 1
+ },
+ "DISC-DISC_L": {
+  "below": 0.532,
+  "above": 0.398,
+  "height": 0.93,
+  "vstates": 1
+ },
+ "DISC_Fuse-TB_Round_L": {
+  "below": 0.57,
+  "above": 0.4,
+  "height": 0.97,
+  "vstates": 1
+ },
+ "DISC_Fuse-TB_Square_L": {
+  "below": 0.615,
+  "above": 0.4,
+  "height": 1.016,
+  "vstates": 1
+ },
+ "DISC_Fuse_L": {
+  "below": 0.078,
+  "above": 0.402,
+  "height": 0.48,
+  "vstates": 1
+ },
+ "DISC_L": {
+  "below": 0.032,
+  "above": 0.402,
+  "height": 0.434,
+  "vstates": 1
+ },
+ "FlowSwitch_NC_L": {
+  "below": 0.5,
+  "above": 0.168,
+  "height": 0.668,
+  "vstates": 1
+ },
+ "FlowSwitch_NO_L": {
+  "below": 0.5,
+  "above": 0.156,
+  "height": 0.656,
+  "vstates": 1
+ },
+ "Fuse-TB_Round_L": {
+  "below": 0.57,
+  "above": 0.234,
+  "height": 0.804,
+  "vstates": 1
+ },
+ "Fuse-TB_Square-Shld_L": {
+  "below": 1.115,
+  "above": 0.215,
+  "height": 1.331,
+  "vstates": 1
+ },
+ "Fuse-TB_Square_L": {
+  "below": 0.615,
+  "above": 0.234,
+  "height": 0.849,
+  "vstates": 1
+ },
+ "Fuse_L": {
+  "below": 0.078,
+  "above": 0.216,
+  "height": 0.294,
+  "vstates": 1
+ },
+ "GND_L": {
+  "below": 0.07,
+  "above": 0.197,
+  "height": 0.266,
+  "vstates": 1
+ },
+ "HOASwitch_NC_L": {
+  "below": 0.276,
+  "above": 0.399,
+  "height": 0.675,
+  "vstates": 1
+ },
+ "HOASwitch_NO_L": {
+  "below": 0.164,
+  "above": 0.399,
+  "height": 0.563,
+  "vstates": 1
+ },
+ "HTR_L": {
+  "below": 0.5,
+  "above": 0.325,
+  "height": 0.825,
+  "vstates": 1
+ },
+ "Inst_2W_L": {
+  "below": 3.75,
+  "above": 0.25,
+  "height": 4.0,
+  "vstates": 16
+ },
+ "Inst_4W_L": {
+  "below": 3.75,
+  "above": 0.75,
+  "height": 4.5,
+  "vstates": 16
+ },
+ "Inst_Sensor_2W_L": {
+  "below": 3.75,
+  "above": 0.25,
+  "height": 4.0,
+  "vstates": 16
+ },
+ "Inst_Sensor_4W_L": {
+  "below": 3.75,
+  "above": 0.75,
+  "height": 4.5,
+  "vstates": 16
+ },
+ "LC_L": {
+  "below": 0.2,
+  "above": 0.302,
+  "height": 0.502,
+  "vstates": 1
+ },
+ "LevelSwitch_NC_L": {
+  "below": 0.5,
+  "above": 0.168,
+  "height": 0.668,
+  "vstates": 1
+ },
+ "LevelSwitch_NO_L": {
+  "below": 0.5,
+  "above": 0.156,
+  "height": 0.656,
+  "vstates": 1
+ },
+ "LightHorn_L": {
+  "below": 1.0,
+  "above": 0.325,
+  "height": 1.325,
+  "vstates": 1
+ },
+ "LimitSwitch_NC_L": {
+  "below": 0.5,
+  "above": 0.195,
+  "height": 0.695,
+  "vstates": 1
+ },
+ "LimitSwitch_NO_L": {
+  "below": 0.5,
+  "above": 0.195,
+  "height": 0.695,
+  "vstates": 1
+ },
+ "MTP_L": {
+  "below": 0.125,
+  "above": 0.225,
+  "height": 0.35,
+  "vstates": 1
+ },
+ "MTRStrt_L": {
+  "below": 1.094,
+  "above": 0.34,
+  "height": 1.434,
+  "vstates": 1
+ },
+ "MTR_1PH_L": {
+  "below": 1.0,
+  "above": 0.038,
+  "height": 1.038,
+  "vstates": 1
+ },
+ "MTR_1PH_NoGND_L": {
+  "below": 0.5,
+  "above": 0.039,
+  "height": 0.539,
+  "vstates": 1
+ },
+ "MTR_3PH_L": {
+  "below": 1.5,
+  "above": 0.0,
+  "height": 1.5,
+  "vstates": 1
+ },
+ "MTR_3PH_NoGND_L": {
+  "below": 1.0,
+  "above": 0.0,
+  "height": 1.0,
+  "vstates": 1
+ },
+ "PressureSwitch_NC_L": {
+  "below": 0.5,
+  "above": 0.167,
+  "height": 0.667,
+  "vstates": 1
+ },
+ "PressureSwitch_NO_L": {
+  "below": 0.5,
+  "above": 0.156,
+  "height": 0.656,
+  "vstates": 1
+ },
+ "PullBox_L": {
+  "below": 0.031,
+  "above": 0.031,
+  "height": 0.062,
+  "vstates": 1
+ },
+ "Pullrope_L": {
+  "below": 0.102,
+  "above": 0.102,
+  "height": 0.204,
+  "vstates": 1
+ },
+ "PushButton_NC_L": {
+  "below": 0.5,
+  "above": 0.062,
+  "height": 0.562,
+  "vstates": 1
+ },
+ "PushButton_NO_L": {
+  "below": 0.5,
+  "above": 0.168,
+  "height": 0.668,
+  "vstates": 1
+ },
+ "RECP_Duplex_L": {
+  "below": 1.0,
+  "above": 0.433,
+  "height": 1.433,
+  "vstates": 1
+ },
+ "RECP_Simplex_L": {
+  "below": 1.0,
+  "above": 0.433,
+  "height": 1.433,
+  "vstates": 1
+ },
+ "RJ45_L": {
+  "below": 0.3,
+  "above": 0.4,
+  "height": 0.7,
+  "vstates": 1
+ },
+ "SC_L": {
+  "below": 0.125,
+  "above": 0.227,
+  "height": 0.352,
+  "vstates": 1
+ },
+ "ST_L": {
+  "below": 0.223,
+  "above": 0.354,
+  "height": 0.577,
+  "vstates": 1
+ },
+ "Shld-TB-TB-TB_Square_L": {
+  "below": 1.615,
+  "above": 0.115,
+  "height": 1.731,
+  "vstates": 1
+ },
+ "Shld-TB-TB_Square_L": {
+  "below": 1.115,
+  "above": 0.115,
+  "height": 1.231,
+  "vstates": 1
+ },
+ "Spare_L": {
+  "below": 0.15,
+  "above": 0.005,
+  "height": 0.155,
+  "vstates": 1
+ },
+ "TB-SHLD-TB_Square_L": {
+  "below": 0.938,
+  "above": 0.438,
+  "height": 1.375,
+  "vstates": 1
+ },
+ "TB-TB-TB-TB_Round_L": {
+  "below": 1.57,
+  "above": 0.07,
+  "height": 1.64,
+  "vstates": 1
+ },
+ "TB-TB-TB-TB_Square_L": {
+  "below": 1.615,
+  "above": 0.115,
+  "height": 1.731,
+  "vstates": 1
+ },
+ "TB-TB-TB_Round_L": {
+  "below": 1.07,
+  "above": 0.07,
+  "height": 1.14,
+  "vstates": 1
+ },
+ "TB-TB-TB_Square-Shld_L": {
+  "below": 1.615,
+  "above": 0.115,
+  "height": 1.731,
+  "vstates": 1
+ },
+ "TB-TB-TB_Square_L": {
+  "below": 1.115,
+  "above": 0.115,
+  "height": 1.231,
+  "vstates": 1
+ },
+ "TB-TB_Round_L": {
+  "below": 0.567,
+  "above": 0.073,
+  "height": 0.64,
+  "vstates": 1
+ },
+ "TB-TB_Square-Shld_L": {
+  "below": 1.115,
+  "above": 0.115,
+  "height": 1.231,
+  "vstates": 1
+ },
+ "TB-TB_Square_L": {
+  "below": 0.615,
+  "above": 0.115,
+  "height": 0.731,
+  "vstates": 1
+ },
+ "TB_Round_L": {
+  "below": 0.07,
+  "above": 0.07,
+  "height": 0.14,
+  "vstates": 1
+ },
+ "TB_Square_L": {
+  "below": 0.115,
+  "above": 0.115,
+  "height": 0.231,
+  "vstates": 1
+ },
+ "TemperatureSwitch_NC_L": {
+  "below": 0.5,
+  "above": 0.237,
+  "height": 0.737,
+  "vstates": 1
+ },
+ "TemperatureSwitch_NO_L": {
+  "below": 0.502,
+  "above": 0.154,
+  "height": 0.656,
+  "vstates": 1
+ },
+ "Valve_L": {
+  "below": 0.5,
+  "above": 0.288,
+  "height": 0.788,
+  "vstates": 1
+ },
+ "XFMR_1PH_L": {
+  "below": 0.644,
+  "above": 0.203,
+  "height": 0.847,
+  "vstates": 1
+ },
+ "XFMR_3PH_L": {
+  "below": 1.062,
+  "above": 0.3,
+  "height": 1.362,
+  "vstates": 1
+ }
+}
