@@ -834,6 +834,12 @@ Private Sub PZ_RebuildRows3To11()
     'relative references in the data-validation formulas.
     Call PZ_EnsureValidations(mProcTo)
 
+    'Self-heal the wire-label max-length highlight -- a regular (format-carrying) paste
+    'into the top of the wire-label columns overwrites the destination cells' conditional
+    'formatting with whatever the source had, which shrinks the rule's sqref and leaves
+    'the pasted-over rows never highlighting no matter how long their label gets.
+    Call PZ_EnsureWireLabelCF
+
     'Normalize row-move leftovers: a row with NO Conduit but stray content
     '(orphaned Symbol etc. from a drag/cut move) is wiped to a clean fillable row.
     'Auto instrument-continuation rows (no Conduit by design) are spared.
@@ -963,6 +969,24 @@ Private Sub PZ_SetSymVal(ByVal addr As String, ByVal f As String)
         .IgnoreBlank = True
         .InCellDropdown = True
         .ShowError = False
+    End With
+    On Error GoTo 0
+End Sub
+
+'Rebuild the "wire label too long" conditional format fresh over the whole wire-label
+'pool (BA3:BD500), matching Excel's built-in Light-Red-Fill-Dark-Red-Text preset. A
+'format-carrying paste over the top of this range can leave the destination cells with
+'the SOURCE's formatting (i.e. no rule at all), which shrinks the single rule's sqref --
+'deleting and re-adding it here every rebuild makes it immune to that.
+Private Sub PZ_EnsureWireLabelCF()
+    On Error Resume Next
+    Dim rng As Range
+    Set rng = Me.Range("BA3:BD" & PZ_LAST_ROW)
+    rng.FormatConditions.Delete
+    With rng.FormatConditions.Add(Type:=xlExpression, Formula1:="=LEN(BA3)>WireLabelMaxLen")
+        .Interior.Color = RGB(255, 199, 206)
+        .Font.Color = RGB(156, 0, 6)
+        .StopIfTrue = True
     End With
     On Error GoTo 0
 End Sub
