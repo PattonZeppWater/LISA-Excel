@@ -18,6 +18,7 @@ Private Sub Workbook_Open()
     On Error Resume Next: Sheet2.PZ_HideCtrlCols: On Error GoTo 0
     On Error Resume Next: Sheet1.CI_EnsureHeaders: Sheet1.CI_EnsureValidations: On Error GoTo 0
     On Error Resume Next: Sheet8.RD_EnsureHeaders: Sheet8.RD_RefreshRows: On Error GoTo 0
+    On Error Resume Next: Sheet10.PD_EnsureHeaders: Sheet10.PD_EnsureTextFormat: On Error GoTo 0
     On Error Resume Next
     Application.EnableEvents = True   'recover if a prior error left events off
     Application.Calculation = xlCalculationAutomatic   'never open stuck in manual calc

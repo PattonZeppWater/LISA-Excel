@@ -9,6 +9,12 @@ Attribute VB_PredeclaredId = True
 Attribute VB_Exposed = True
 Option Explicit
 
+'Data area (rows 3..PD_LAST_ROW, columns A..H). Mirrors Ref Documents & Deviations:
+'the cells are kept as Text so a value like "00E016" is stored verbatim instead of being
+'turned into scientific notation by Excel's "General" number handling.
+Private Const PD_FIRST_DATA As Long = 3
+Private Const PD_LAST_ROW As Long = 100
+
 Public Sub PD_EnsureHeaders()
     On Error Resume Next
     If Len(Trim$(CStr(Me.Cells(1, 1).Value))) > 0 _
@@ -45,9 +51,22 @@ Public Sub PD_EnsureHeaders()
     Application.EnableEvents = True
 End Sub
 
+'Keep the data area formatted as Text (like Ref Documents & Deviations), so values such
+'as "00E016" stay exactly as typed rather than becoming scientific notation. Applied
+'proactively (on activate / open) so the cell is already Text before anything is typed.
+Public Sub PD_EnsureTextFormat()
+    On Error Resume Next
+    Me.Range("A" & PD_FIRST_DATA & ":H" & PD_LAST_ROW).NumberFormat = "@"
+End Sub
+
 Private Sub Worksheet_Change(ByVal Target As Range)
     On Error GoTo SafeExit
     Call PD_EnsureHeaders
+    If Not Intersect(Target, Me.Range("A" & PD_FIRST_DATA & ":H" & PD_LAST_ROW)) Is Nothing Then
+        Application.EnableEvents = False
+        Call PD_EnsureTextFormat
+        Application.EnableEvents = True
+    End If
 SafeExit:
     Application.EnableEvents = True
 End Sub
@@ -55,6 +74,7 @@ End Sub
 Private Sub Worksheet_Activate()
     On Error Resume Next
     Call PD_EnsureHeaders
+    Call PD_EnsureTextFormat
 End Sub
 
 
