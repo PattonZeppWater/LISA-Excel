@@ -15,7 +15,16 @@ Public Sub PD_EnsureHeaders()
        And Len(Trim$(CStr(Me.Cells(2, 1).Value))) > 0 _
        And Len(Trim$(CStr(Me.Cells(2, 8).Value))) > 0 Then Exit Sub
     Application.EnableEvents = False
-    Me.Range("A1:H1").Merge
+    'Row 1 title band -- restore text AND its look (white bold on dark blue). Ctrl+A + Delete
+    'wipes the header text; without re-applying the fill/font the band read as blank, so we
+    'rebuild the whole thing, not just the text.
+    With Me.Range("A1:H1")
+        .UnMerge
+        .Merge
+        .Interior.Color = RGB(21, 58, 138)
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+    End With
     Me.Cells(1, 1).Value = "PROJECT DESCRIPTION"
     Me.Cells(2, 1).Value = "Owner"
     Me.Cells(2, 2).Value = "Job Title"
@@ -25,6 +34,14 @@ Public Sub PD_EnsureHeaders()
     Me.Cells(2, 6).Value = "Date"
     Me.Cells(2, 7).Value = "Engineer"
     Me.Cells(2, 8).Value = "Drafter"
+    'Row 2 column labels -- black bold on light blue with a thin box border.
+    With Me.Range("A2:H2")
+        .Interior.Color = RGB(218, 233, 248)
+        .Font.Color = RGB(0, 0, 0)
+        .Font.Bold = True
+        .Borders.LineStyle = xlContinuous
+        .Borders.Weight = xlThin
+    End With
     Application.EnableEvents = True
 End Sub
 

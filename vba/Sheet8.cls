@@ -20,16 +20,53 @@ Private Const RD_LAST_ROW As Long = 100
 
 Public Sub RD_EnsureHeaders()
     On Error Resume Next
-    'Only restore the row-2 labels if they've been cleared; row 1 is never touched.
-    If Len(Trim$(CStr(Me.Cells(RD_HEADER_ROW, 1).Value))) > 0 _
+    'Restore if EITHER the row-1 title bands OR the row-2 labels have been cleared. Row 1 used
+    'to be left untouched, so a Ctrl+A + Delete wiped the white-on-blue title bands permanently
+    '-- now they self-heal too.
+    If Len(Trim$(CStr(Me.Cells(1, 1).Value))) > 0 _
+       And Len(Trim$(CStr(Me.Cells(1, 5).Value))) > 0 _
+       And Len(Trim$(CStr(Me.Cells(RD_HEADER_ROW, 1).Value))) > 0 _
        And Len(Trim$(CStr(Me.Cells(RD_HEADER_ROW, 5).Value))) > 0 Then Exit Sub
     Application.EnableEvents = False
+    'Row 1 title bands (white bold text on colored fill) -- both the Reference Documents band
+    'and the Deviation Notes band.
+    With Me.Range("A1:D1")
+        .UnMerge
+        .Merge
+        .Interior.Color = RGB(21, 58, 138)
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+    End With
+    Me.Cells(1, 1).Value = "REFERENCE DOCUMENTS"
+    With Me.Range("E1:F1")
+        .UnMerge
+        .Merge
+        .Interior.Color = RGB(58, 95, 168)
+        .Font.Color = RGB(255, 255, 255)
+        .Font.Bold = True
+    End With
+    Me.Cells(1, 5).Value = "DEVIATION NOTES"
+    'Row 2 column labels + their look (black bold, thin box border).
     Me.Cells(RD_HEADER_ROW, 1).Value = "Ref Document"
     Me.Cells(RD_HEADER_ROW, 2).Value = "DWG#"
     Me.Cells(RD_HEADER_ROW, 3).Value = "Description"
     Me.Cells(RD_HEADER_ROW, 4).Value = "Manufacturer"
     Me.Cells(RD_HEADER_ROW, 5).Value = "Deviations Notes #"
     Me.Cells(RD_HEADER_ROW, 6).Value = "Deviations Notes"
+    With Me.Range("A2:D2")
+        .Interior.Color = RGB(232, 239, 250)
+        .Font.Color = RGB(0, 0, 0)
+        .Font.Bold = True
+        .Borders.LineStyle = xlContinuous
+        .Borders.Weight = xlThin
+    End With
+    With Me.Range("E2:F2")
+        .Interior.Color = RGB(242, 246, 253)
+        .Font.Color = RGB(0, 0, 0)
+        .Font.Bold = True
+        .Borders.LineStyle = xlContinuous
+        .Borders.Weight = xlThin
+    End With
     Application.EnableEvents = True
 End Sub
 

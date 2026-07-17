@@ -31,7 +31,7 @@ Private mClrPrevAddr As String
 Private mClrPrevVal As String
 
 '--- Per-term "Hide from Generation" toggle ----------------------------------
-'Hidden CSV store ("S1,D3" …) lives at BK(63), OUTSIDE the A3:BJ watch range so
+'Hidden CSV store ("S1,D3" ï¿½) lives at BK(63), OUTSIDE the A3:BJ watch range so
 'writing it never re-triggers Worksheet_Change. Term cells keep their real value;
 'a hidden term is flagged (amber + comment) and its dropdown shows a check mark.
     Private Const PZ_HIDDENTERMS_COL As Long = 65
@@ -105,6 +105,7 @@ Public Sub PZ_EnsureTopHeaders()
         Me.Columns(67).ColumnWidth = 8
     End If
     Me.Parent.Names.Add Name:="WireLabelMaxLen", RefersTo:="=FillIndex!$BO$1"
+    Call PZ_EnsureHeaderBorders   'restore the header box border after banners are (re)built
     Application.DisplayAlerts = True
     Application.EnableEvents = True
 End Sub
@@ -121,6 +122,28 @@ Private Sub PZ_MakeBanner(ByVal addr As String, ByVal txt As String, ByVal clr A
         .HorizontalAlignment = xlCenter
         .VerticalAlignment = xlCenter
     End With
+End Sub
+
+'Self-heal the header box border. The two header rows (row 1 section banners + row 2 column
+'labels, columns A..BD) carry a thin grid; a Ctrl+A + Delete used to trigger a rebuild that
+'STRIPPED it. This restores it and is called from every rebuild / header-heal.
+Private Sub PZ_EnsureHeaderBorders()
+    On Error Resume Next
+    With Me.Range("A1:BD2")
+        .Borders(xlEdgeLeft).LineStyle = xlContinuous
+        .Borders(xlEdgeLeft).Weight = xlThin
+        .Borders(xlEdgeTop).LineStyle = xlContinuous
+        .Borders(xlEdgeTop).Weight = xlThin
+        .Borders(xlEdgeBottom).LineStyle = xlContinuous
+        .Borders(xlEdgeBottom).Weight = xlThin
+        .Borders(xlEdgeRight).LineStyle = xlContinuous
+        .Borders(xlEdgeRight).Weight = xlThin
+        .Borders(xlInsideVertical).LineStyle = xlContinuous
+        .Borders(xlInsideVertical).Weight = xlThin
+        .Borders(xlInsideHorizontal).LineStyle = xlContinuous
+        .Borders(xlInsideHorizontal).Weight = xlThin
+    End With
+    On Error GoTo 0
 End Sub
 
 
@@ -303,8 +326,7 @@ Public Sub PZ_EnsureHeaders()
     Me.Cells(2, 60).Value = "WL4_Mode"
     Me.Cells(2, 65).Value = "Hidden Terms"
     Application.EnableEvents = True
-    Me.Range("A2:BM2").Borders.LineStyle = xlLineStyleNone
-    Me.Range("A3:BM3").Borders(xlEdgeTop).LineStyle = xlLineStyleNone   'no line under the header
+    Call PZ_EnsureHeaderBorders   'headers keep their thin box border (was being stripped)
 End Sub
 
 Private Sub PZ_MakeRowFillable(ByVal rowNum As Long)
@@ -395,21 +417,9 @@ Private Sub Worksheet_Change(ByVal Target As Range)
         End If
     End If
 
-    'Per-term hide toggle: a Term cell whose dropdown was set to the (un)hide option.
-    If Target.CountLarge = 1 Then
-        If Target.Row >= 3 And Target.Row <= PZ_LAST_ROW Then
-            If Len(PZ_TermToken(Target.Column)) > 0 Then
-                Dim tvu As String
-                tvu = Trim$(CStr(Target.Value))
-                If tvu = PZ_TERM_OPT Or tvu = PZ_TermOptOn() Then
-                    Application.EnableEvents = False
-                    PZ_HandleTermHide Target
-                    Application.EnableEvents = True
-                    Exit Sub
-                End If
-            End If
-        End If
-    End If
+    'Per-term hide toggle is now a RIGHT-CLICK (Worksheet_BeforeRightClick), not a typed /
+    'picked value -- see that handler. (The old dropdown's single-item list let Excel 365
+    'auto-complete a typed letter like f/g/h straight into "Hide from Generation".)
 
     'FAST PATH: single-cell edit in a NON-structural column (not Symbol/Wire Ct/Type)
     'changes no formatting/grouping; wire labels are auto-updating formulas -> skip the
@@ -499,6 +509,53 @@ Private Sub Worksheet_SelectionChange(ByVal Target As Range)
         mTermPrevAddr = Target.Address
         mTermPrevVal = CStr(Target.Value)
     End If
+End Sub
+
+
+'Right-click a Term or Tag cell to toggle its "Hide from Generation" flag (matches the
+'header hover-notes: "Right-click ... for the toggle"). This replaced the single-item
+'dropdown, whose validation list let Excel 365 auto-complete typed letters (f/g/h all
+'appear in "Hide from Generation") into the hide option. Term/Tag cells are now free text.
+Private Sub Worksheet_BeforeRightClick(ByVal Target As Range, Cancel As Boolean)
+    On Error GoTo done
+    If Target Is Nothing Then Exit Sub
+    If Target.CountLarge <> 1 Then Exit Sub
+    If Target.Row < 3 Or Target.Row > PZ_LAST_ROW Then Exit Sub
+    Dim tok As String
+    tok = PZ_TermToken(Target.Column)
+    If Len(tok) = 0 Then Exit Sub
+    'Only an OPEN cell (white/fillable, or amber/already-hidden) can be toggled; a greyed
+    '"not applicable" cell keeps its normal right-click menu.
+    If Not PZ_CellIsOpen(Target) Then Exit Sub
+    Cancel = True
+    Application.EnableEvents = False
+    Call PZ_ToggleTermHide(Target, tok)
+done:
+    Application.EnableEvents = True   'always re-enable, even if the toggle errored
+End Sub
+
+'A term/tag cell is "open" when white (fillable) or amber (already flagged hidden); a
+'greyed "not applicable" cell is closed.
+Private Function PZ_CellIsOpen(ByVal c As Range) As Boolean
+    On Error Resume Next
+    If c.Interior.Pattern = xlNone Then PZ_CellIsOpen = True: Exit Function
+    If c.Interior.Color = RGB(255, 235, 156) Then PZ_CellIsOpen = True
+End Function
+
+'Flip a term/tag's hidden state: keep its real value, flip the CSV token, repaint. The
+'value is never overwritten (unlike the old dropdown), so no undo/restore dance is needed.
+Private Sub PZ_ToggleTermHide(ByVal c As Range, ByVal tok As String)
+    Dim hcell As Range, csv As String, nowHidden As Boolean
+    Set hcell = Me.Cells(c.Row, PZ_HIDDENTERMS_COL)
+    csv = CStr(hcell.Value)
+    If PZ_CsvHas(csv, tok) Then
+        hcell.Value = PZ_CsvRemove(csv, tok)
+        nowHidden = False
+    Else
+        hcell.Value = PZ_CsvAdd(csv, tok)
+        nowHidden = True
+    End If
+    Call PZ_ApplyTermHideVisual(c, nowHidden)
 End Sub
 
 
@@ -817,8 +874,7 @@ Private Sub PZ_RebuildRows3To11()
     mCommitted = Me.Range(PZ_UNDO_RANGE).Formula
     On Error GoTo 0
 
-    Me.Range("A2:BM2").Borders.LineStyle = xlLineStyleNone
-    Me.Range("A3:BM3").Borders(xlEdgeTop).LineStyle = xlLineStyleNone   'no line under the header   'keep header borderless after the grid is re-applied
+    Call PZ_EnsureHeaderBorders   'restore the header box border every rebuild (Ctrl+A / edit)
     PZ_HideCtrlCols
     Me.Range("A3:AZ" & PZ_LAST_ROW).NumberFormat = "@"   'keep entry cells Text (so 001 stays 001); wire-label formulas at BA+ untouched
 End Sub
@@ -873,11 +929,20 @@ Private Sub PZ_EnsureValidations(ByVal lastRow As Long)
         Set hh = PZ_HeaderCell(2, "Wire Label" & n3)
         If Not hh Is Nothing Then ltr = Split(hh.Address, "$")(1): Call PZ_SetSymVal(ltr & "3:" & ltr & lastRow, "Default,Custom,Blank")
     Next n3
+    'Term / Tag / Rating cells are FREE TEXT. Clear any leftover "Hide from Generation" list
+    'validation from older workbooks -- its single-item list let Excel 365 auto-complete a
+    'typed letter (f/g/h all occur in the phrase) into the hide option. The hide toggle is
+    'now a right-click (Worksheet_BeforeRightClick).
     For Each vc In Array("S Tag1", "S Tag2", "S Tag3", "S Tag4", "D Tag1", "D Tag2", "D Tag3", "D Tag4", _
                          "S Term1", "S Term2", "S Term3", "S Term4", "D Term1", "D Term2", "D Term3", "D Term4", _
                          "S Rating", "D Rating")
         Set hh = PZ_HeaderCell(2, CStr(vc))
-        If Not hh Is Nothing Then ltr = Split(hh.Address, "$")(1): Call PZ_SetSymVal(ltr & "3:" & ltr & lastRow, PZ_TERM_OPT)
+        If Not hh Is Nothing Then
+            ltr = Split(hh.Address, "$")(1)
+            On Error Resume Next
+            Me.Range(ltr & "3:" & ltr & lastRow).Validation.Delete
+            On Error GoTo 0
+        End If
     Next vc
 End Sub
 
@@ -1241,7 +1306,8 @@ Private Sub PZ_SetWireLabelFormulas(ByVal rowNum As Long)
                 sTermExpr & ")" & _
                 "&""/""&" & _
                 "TEXTJOIN("":"",TRUE," & _
-                "INDEX(ConduitIndex!$E:$E,MATCH(" & conduitCell.Address(False, False) & ",ConduitIndex!$A:$A,0))," & _
+                "IF(INDEX(ConduitIndex!$E:$E,MATCH(" & conduitCell.Address(False, False) & ",ConduitIndex!$A:$A,0))=" & dTagExpr & ",""""," & _
+                "INDEX(ConduitIndex!$E:$E,MATCH(" & conduitCell.Address(False, False) & ",ConduitIndex!$A:$A,0)))," & _
                 dTagExpr & "," & _
                 dTermExpr & ")" & _
                 ",""""))"
@@ -2349,12 +2415,8 @@ Private Sub PZ_ApplyTermHideVisual(ByVal c As Range, ByVal isHidden As Boolean)
     Else
         c.Interior.Pattern = xlNone
     End If
-    c.Validation.Delete
-    c.Validation.Add Type:=xlValidateList, AlertStyle:=xlValidAlertStop, _
-        Operator:=xlBetween, Formula1:=IIf(isHidden, PZ_TermOptOn(), PZ_TERM_OPT)
-    c.Validation.IgnoreBlank = True
-    c.Validation.InCellDropdown = True
-    c.Validation.ShowError = False
+    'No dropdown validation anymore -- the hidden state shows as the amber fill + note; the
+    'toggle is right-click. (A single-item list here caused the typed-letter auto-complete.)
     On Error GoTo 0
 End Sub
 
@@ -2567,8 +2629,13 @@ Private Sub PZ_FitWireLabels()
     'stray "background" text further right. Width is set directly from the measured text
     'length (reliable, unlike Columns.AutoFit here). Labels are recalculated first since
     'we are usually in manual-calc during a rebuild/edit.
-    Dim c As Long, r As Long, maxLen As Long, s As String, lastR As Long
+    Dim c As Long, r As Long, maxLen As Long, s As String, lastR As Long, ldr As Long
     lastR = mMaxProc
+    'Also measure through the last row that actually holds data: on a fast-path edit the
+    'processed extent (mMaxProc) can lag the row just typed, so its (longer) label was not
+    'measured and the column never widened -- the "sometimes it doesn't lengthen" case.
+    ldr = PZ_LastDataRow()
+    If ldr > lastR Then lastR = ldr
     If lastR < 3 Or lastR > PZ_LAST_ROW Then lastR = PZ_LAST_ROW
     On Error Resume Next
     'Full recalc so the wire-label formulas AND every cell they reference are current
