@@ -852,9 +852,17 @@ Private Sub PZ_RebuildRows3To11()
 
     'One pass over the active region: wipe row-move leftovers (orphaned content with no
     'Conduit) and reformat empties back to a clean fillable row.
-    Dim rf As Long
+    'A row with a valid Wire Ct + an S or D Symbol is legitimate in-progress data (the
+    'Conduit is just filled in later, or the paste that populated the row didn't happen
+    'to include column A) -- the main loop above already formats it correctly, so it must
+    'NOT be wiped here. Without this guard, pasting into a row without including column A
+    'looked identical to a cut/drag leftover and the whole row got silently cleared.
+    Dim rf As Long, rfLoopCt As Long, rfLooksValid As Boolean
     For rf = 3 To cleanTo
-        If Trim$(CStr(Me.Cells(rf, "A").Value)) = "" And Not PZ_RowIsEmpty(rf) And Not PZ_IsAuto(rf) Then
+        rfLoopCt = 0
+        If IsNumeric(Me.Cells(rf, "B").Value) Then rfLoopCt = CLng(Me.Cells(rf, "B").Value)
+        rfLooksValid = PZ_ValidLoop(rfLoopCt) And (Trim$(CStr(Me.Cells(rf, SSYM).Value)) <> "" Or PZ_DSymPresent(rf))
+        If Trim$(CStr(Me.Cells(rf, "A").Value)) = "" And Not PZ_RowIsEmpty(rf) And Not PZ_IsAuto(rf) And Not rfLooksValid Then
             Me.Range("A" & rf & ":BM" & rf).ClearContents
         End If
         If PZ_RowIsEmpty(rf) Then Call PZ_MakeRowFillable(rf)
