@@ -61,6 +61,7 @@ export default function IdpGeneration() {
   const [outputFolder, setOutputFolder] = useState(_sess.outputFolder || "");
   const [projectNumber, setProjectNumber] = useState(_sess.projectNumber || "");
   const [fileSuffix, setFileSuffix]       = useState(_sess.fileSuffix || "");
+  const [makeProject, setMakeProject]     = useState(_sess.makeProject || false);  // "Make it a project"
   const [activeTab, setActiveTab]       = useState("conduit");
   const [autocad, setAutocad]           = useState(null);   // { running, version }
   const [loading, setLoading]           = useState(null);   // page-level op key
@@ -108,7 +109,7 @@ export default function IdpGeneration() {
     // Debounced so typing in the small fields doesn't re-serialize the ~MB workbook on
     // every keystroke; saves ~0.6s after the last change.
     const t = setTimeout(() => {
-      const data = { wb, outputFolder, projectNumber, fileSuffix, rowResult };
+      const data = { wb, outputFolder, projectNumber, fileSuffix, makeProject, rowResult };
       try {
         localStorage.setItem(SESSION_KEY, JSON.stringify(data));
       } catch {
@@ -121,7 +122,7 @@ export default function IdpGeneration() {
       }
     }, 600);
     return () => clearTimeout(t);
-  }, [wb, outputFolder, projectNumber, fileSuffix, rowResult]);
+  }, [wb, outputFolder, projectNumber, fileSuffix, makeProject, rowResult]);
 
   // ── Match an uploaded conduit-name list against the loaded workbook ────────
   const txtMatch = useMemo(() => {
@@ -265,6 +266,10 @@ export default function IdpGeneration() {
       setStatus({ type: "error", message: "Set an output folder before generating." });
       return;
     }
+    if (makeProject && !projectNumber.trim()) {
+      setStatus({ type: "error", message: "Enter a Project number to generate a project (or uncheck “Make it a project”)." });
+      return;
+    }
 
     // Warn before overwriting a drawing that was already generated (guards against
     // clobbering finished work). Skipped when Generate All already confirmed up front.
@@ -295,6 +300,7 @@ export default function IdpGeneration() {
       project_number: projectNumber.trim(),
       seq_num:        seq,
       file_suffix:    fileSuffix.trim() || "e",
+      make_project:   makeProject,
     }, ctrl.signal);
 
     delete abortMap.current[conduitIdent];
@@ -645,6 +651,27 @@ export default function IdpGeneration() {
                 </span>
               )}
             </div>
+
+            <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={makeProject}
+                onChange={e => setMakeProject(e.target.checked)}
+                style={{ width: "16px", height: "16px", marginTop: "2px", cursor: "pointer", flexShrink: 0 }}
+              />
+              <span style={{ fontSize: "0.82rem", color: "var(--text-label)" }}>
+                Make it a project
+                <span style={{ display: "block", color: "var(--text-dim)", fontSize: "0.72rem" }}>
+                  Assembles an AutoCAD Electrical project (.wdp/.aepx) with the GENERAL sheets + your
+                  conduits, in the output folder. Needs a project number.
+                </span>
+                {makeProject && !projectNumber.trim() && (
+                  <span style={{ display: "block", color: "var(--status-error)", fontSize: "0.72rem", marginTop: "2px" }}>
+                    Enter a project number above.
+                  </span>
+                )}
+              </span>
+            </label>
 
             <button
               className="btn btn-primary"
