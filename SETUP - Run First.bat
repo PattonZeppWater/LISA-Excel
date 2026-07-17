@@ -64,6 +64,9 @@ echo.
 
 REM --- 3. create the virtual environment ----------------------
 echo [2/4] Creating the virtual environment ...
+REM Remove any existing .venv first -- if one was copied in from another PC it is
+REM dead (its config points at the original machine), so always build fresh here.
+if exist ".venv" rmdir /s /q ".venv"
 echo !PYEXE!| findstr "\\" >nul
 if errorlevel 1 (
   !PYEXE! -m venv .venv
