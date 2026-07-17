@@ -412,6 +412,13 @@ Private Sub Worksheet_Change(ByVal Target As Range)
         If wlmN > 0 And Target.Row >= 3 And Target.Row <= PZ_LAST_ROW Then
             Application.EnableEvents = False
             PZ_HandleWireLabelPick Target.Row, wlmN, Target
+            'Editing a wire-label cell itself (picking Default/Blank/Custom, or typing
+            'the custom label) used to skip the width fit entirely -- every OTHER edit
+            'in the row routes through a path that calls this, so a column only ever
+            'widened as a side effect of some later, unrelated edit. Column 4 was the
+            'one most likely to be the LAST edit on a row (set after 1-3), so it was
+            'the one that visibly never caught up.
+            Call PZ_FitWireLabels
             Application.EnableEvents = True
             Exit Sub
         End If
