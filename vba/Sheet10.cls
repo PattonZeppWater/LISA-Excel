@@ -54,9 +54,14 @@ End Sub
 'Keep the data area formatted as Text (like Ref Documents & Deviations), so values such
 'as "00E016" stay exactly as typed rather than becoming scientific notation. Applied
 'proactively (on activate / open) so the cell is already Text before anything is typed.
+'Also auto-fit the columns so they lengthen to their content, like the other sheets.
 Public Sub PD_EnsureTextFormat()
     On Error Resume Next
     Me.Range("A" & PD_FIRST_DATA & ":H" & PD_LAST_ROW).NumberFormat = "@"
+    Dim c As Long
+    For c = 1 To 8
+        If Not Me.Columns(c).Hidden Then Me.Columns(c).AutoFit
+    Next c
 End Sub
 
 Private Sub Worksheet_Change(ByVal Target As Range)
