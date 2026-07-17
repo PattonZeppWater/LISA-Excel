@@ -94,7 +94,7 @@ Public Sub PZ_EnsureTopHeaders()
             .Font.Bold = True
             .Font.ColorIndex = xlAutomatic
             .Font.Size = 11
-            .Interior.Color = RGB(255, 255, 0)
+            .Interior.Color = RGB(238, 242, 246)
             .HorizontalAlignment = xlCenter
         End With
         With Me.Range(Me.Cells(1, 66), Me.Cells(1, 67))
