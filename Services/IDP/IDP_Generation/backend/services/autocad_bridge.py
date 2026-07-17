@@ -1238,8 +1238,8 @@ def _clean_wire_val(v) -> str | None:
 
 def _split_gauge(v):
     """(kind, core) classifier for a wire gauge -- mirrors workbook_mapper._split_gauge.
-    kind in {'KCMIL','AWG','TEXT','NA','EMPTY'}; core is the bare size (no '#', no
-    'AWG'/'KCMIL' suffix, no spaces)."""
+    kind in {'KCMIL','MCM','AWG','TEXT','NA','EMPTY'}; core is the bare size (no '#', no
+    'AWG'/'KCMIL'/'MCM' suffix, no spaces)."""
     if v is None:
         return ("EMPTY", "")
     s = str(v).strip()
@@ -1249,9 +1249,12 @@ def _split_gauge(v):
         return ("NA", s)
     core = s[1:].strip() if s.startswith("#") else s
     up = core.upper()
-    if "KCMIL" in up or "MCM" in up:
-        num = up.replace("KCMIL", "").replace("MCM", "").replace(" ", "").strip()
+    if "KCMIL" in up:
+        num = up.replace("KCMIL", "").replace(" ", "").strip()
         return ("KCMIL", num)
+    if "MCM" in up:                       # keep MCM as MCM (do NOT convert to kcmil)
+        num = up.replace("MCM", "").replace(" ", "").strip()
+        return ("MCM", num)
     if up.endswith("AWG"):
         up = up[:-3]
     up = up.replace(" ", "").strip()
@@ -1264,6 +1267,7 @@ def _gauge_label(v):
     """Format a wire gauge for the wire LABEL / block size attribute:
        AWG sizes   -> '#<size>'      ('10 AWG' -> '#10', '4AWG' -> '#4', '3/0' -> '#3/0')
        KCMIL sizes -> '<size>KCMIL'  (no '#';  '300 KCMIL' -> '300KCMIL')
+       MCM sizes   -> '<size>MCM'    (kept as MCM, not converted; '250 mcm' -> '250MCM')
        text gauges left as typed;  blanks / N/A -> None (attribute stays blank)."""
     v = _clean_wire_val(v)
     if v is None:
@@ -1271,6 +1275,8 @@ def _gauge_label(v):
     kind, core = _split_gauge(v)
     if kind == "KCMIL":
         return f"{core}KCMIL"
+    if kind == "MCM":
+        return f"{core}MCM"
     if kind == "AWG":
         return f"#{core}"
     return v

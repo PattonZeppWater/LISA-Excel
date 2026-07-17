@@ -268,14 +268,16 @@ def _hash_gauge(v):
 def _split_gauge(v):
     """Classify a wire-gauge value into (kind, core).
 
-    kind is one of 'KCMIL', 'AWG', 'TEXT', 'NA', 'EMPTY'.  core is the bare size with
-    any leading '#', trailing 'AWG'/'KCMIL'/'MCM', and internal spaces removed:
+    kind is one of 'KCMIL', 'MCM', 'AWG', 'TEXT', 'NA', 'EMPTY'.  core is the bare size
+    with any leading '#', trailing 'AWG'/'KCMIL'/'MCM', and internal spaces removed:
         '10 AWG'   -> ('AWG',   '10')
         '4AWG'     -> ('AWG',   '4')
         '#12'      -> ('AWG',   '12')
         '3/0'      -> ('AWG',   '3/0')
         '300KCMIL' -> ('KCMIL', '300')
         '300 KCMIL'-> ('KCMIL', '300')
+        '250MCM'   -> ('MCM',   '250')   (MCM kept as MCM, NOT converted to KCMIL)
+        '250 mcm'  -> ('MCM',   '250')
         'FIBER'    -> ('TEXT',  'FIBER')   (non-numeric text gauge, left as typed)
     """
     if v is None:
@@ -287,9 +289,12 @@ def _split_gauge(v):
         return ("NA", s)
     core = s[1:].strip() if s.startswith("#") else s      # drop a leading '#'
     up = core.upper()
-    if "KCMIL" in up or "MCM" in up:                      # kcmil/mcm -> keep the number only
-        num = up.replace("KCMIL", "").replace("MCM", "").replace(" ", "").strip()
+    if "KCMIL" in up:                                     # kcmil -> keep the number only
+        num = up.replace("KCMIL", "").replace(" ", "").strip()
         return ("KCMIL", num)
+    if "MCM" in up:                                       # mcm -> keep as MCM (do NOT convert to kcmil)
+        num = up.replace("MCM", "").replace(" ", "").strip()
+        return ("MCM", num)
     if up.endswith("AWG"):                                # strip a trailing AWG
         up = up[:-3]
     up = up.replace(" ", "").strip()
@@ -303,10 +308,13 @@ def _with_awg(size) -> str | None:
        AWG sizes   -> '#<size>AWG'   ('10' -> '#10AWG')
        AWG aught   -> '#<size>'      ('3/0' -> '#3/0', '1/0' -> '#1/0') -- no 'AWG' suffix
        KCMIL sizes -> '<size>KCMIL'  (no '#', no 'AWG'; '300 KCMIL' -> '300KCMIL')
+       MCM sizes   -> '<size>MCM'    (kept as MCM, not converted; '250 mcm' -> '250MCM')
        text gauges (FIBER) / N/A / blanks are left exactly as typed."""
     kind, core = _split_gauge(size)
     if kind == "KCMIL":
         return f"{core}KCMIL"
+    if kind == "MCM":
+        return f"{core}MCM"
     if kind == "AWG":
         # Aught sizes (1/0, 2/0, 3/0, 4/0) are written WITHOUT the 'AWG' suffix so the
         # table matches the wire label -- e.g. '3/0' -> '#3/0' in both places.

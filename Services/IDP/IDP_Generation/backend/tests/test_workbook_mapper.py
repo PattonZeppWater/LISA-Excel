@@ -34,6 +34,15 @@ def test_with_awg_aught_no_suffix():
     assert wm._with_awg("1/0") == "#1/0"
     assert wm._with_awg("#4/0") == "#4/0"
 
+def test_with_awg_mcm_kept():
+    # MCM stays MCM (must NOT auto-convert to KCMIL); spacing/case normalized.
+    assert wm._with_awg("250MCM") == "250MCM"
+    assert wm._with_awg("250 mcm") == "250MCM"
+
+def test_with_awg_kcmil_unchanged():
+    assert wm._with_awg("300KCMIL") == "300KCMIL"
+    assert wm._with_awg("300 kcmil") == "300KCMIL"
+
 def test_with_awg_text_gauge_unchanged():
     assert wm._with_awg("FIBER") == "FIBER"
 
