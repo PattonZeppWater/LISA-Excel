@@ -12,10 +12,17 @@ The project descriptor fields (*[1]..*[8]) are populated from the workbook's
 Engineer / Drafter). The project number also comes in directly from the UI and always
 wins for *[4] (it names the file too).
 """
-import os, glob, re, shutil, uuid
+import os, glob, re, shutil, uuid, json
 
 _TMPL_PATH = os.path.join(os.path.dirname(__file__), "idp_project_wdp.tmpl")
 _SUB_LINE  = "=====SUB=INTERCONNECTION DIAGRAMS"
+
+# Sidecar mapping {dwg filename -> {"desc1", "desc2", "desc3"}} for the .wdp's
+# per-drawing "Drawing Properties" description lines (Conduit name / Source Name 1 /
+# Destination Name 1). The .wdp is rebuilt from scratch from whatever .dwgs are in the
+# folder on every /generate call, so a conduit generated in an earlier call needs its
+# description remembered somewhere other than the .wdp itself.
+_DESC_STORE = "_idp_dwg_descriptions.json"
 
 # Bundled AIC project template (cleaned from the "For Claude" folder): the GENERAL sheets
 # G1-G3 + title-block map (.wdl) + drawing template (.wdt). Used only for "make it a project".
@@ -97,6 +104,61 @@ def _load_header(field_map: dict) -> str:
     return header.replace("\n", "\r\n") + "\r\n"
 
 
+def _desc_store_path(output_folder: str) -> str:
+    return os.path.join(output_folder, _DESC_STORE)
+
+
+def record_dwg_descriptions(output_folder: str, dwg_names, desc1="", desc2="", desc3="") -> None:
+    """Remember a drawing's Description 1/2/3 (Conduit name / Source Name 1 / Destination
+    Name 1) in a small JSON sidecar next to the .dwgs. Call once per generated sheet, right
+    after it's written. Never raises."""
+    try:
+        if not output_folder or not os.path.isdir(output_folder):
+            return
+        path = _desc_store_path(output_folder)
+        store = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    store = json.load(f)
+            except Exception:
+                store = {}
+        entry = {k: str(v).strip() for k, v in
+                 (("desc1", desc1), ("desc2", desc2), ("desc3", desc3)) if str(v or "").strip()}
+        for name in dwg_names:
+            if entry:
+                store[name] = entry
+            else:
+                store.pop(name, None)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(store, f)
+    except Exception:
+        pass
+
+
+def _load_dwg_descriptions(output_folder: str) -> dict:
+    try:
+        path = _desc_store_path(output_folder)
+        if not os.path.exists(path):
+            return {}
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _desc_lines(desc: dict | None) -> str:
+    """Up to three '===' Description-1/2/3 lines, in the order AutoCAD Electrical's .wdp
+    format expects (the Nth '===' line IS Description N, positionally) -- trailing blanks
+    are dropped, but a blank BETWEEN two filled slots is kept so a later description
+    doesn't shift into an earlier slot."""
+    desc = desc or {}
+    vals = [str(desc.get(k) or "").strip() for k in ("desc1", "desc2", "desc3")]
+    while vals and not vals[-1]:
+        vals.pop()
+    return "".join("===%s\r\n" % v for v in vals)
+
+
 def _project_dwgs(output_folder: str) -> list:
     """All real .dwg files in the output folder (sorted), excluding AutoCAD recover files."""
     names = []
@@ -126,9 +188,10 @@ def write_project_wdp(output_folder: str, project_number: str, dwg_names=None,
         # never reference the .wdp itself; keep it stable/sorted
         dwg_names = sorted({n for n in dwg_names if n.lower().endswith(".dwg")}, key=str.lower)
 
+        descriptions = _load_dwg_descriptions(output_folder)
         body = _load_header(_field_map(project_number, project_info))
         for dwg in dwg_names:
-            body += _SUB_LINE + "\r\n" + dwg + "\r\n"
+            body += _SUB_LINE + "\r\n" + _desc_lines(descriptions.get(dwg)) + dwg + "\r\n"
 
         out_path = os.path.join(output_folder, safe + ".wdp")
         with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
@@ -147,9 +210,10 @@ def _safe(project_number: str) -> str:
     return "".join(c for c in (project_number or "") if c.isalnum() or c in "-_. ").strip() or "IDP_Project"
 
 
-def _block(section: str, label: str, dwg: str) -> str:
-    """One drawing entry in a .wdp: =SECTION / ===SUBSECTION / =====SUB=SECTION / file."""
-    return "=%s\r\n===%s\r\n=====SUB=%s\r\n%s\r\n" % (section, label, section, dwg)
+def _block(section: str, dwg: str, desc: dict = None) -> str:
+    """One drawing entry in a .wdp: =SECTION / =====SUB=SECTION / up to three ===Description
+    lines (Description 1/2/3, in order) / the filename."""
+    return "=%s\r\n=====SUB=%s\r\n%s%s\r\n" % (section, section, _desc_lines(desc), dwg)
 
 
 def _find_template_file(pattern: str):
@@ -207,14 +271,16 @@ def write_full_project_wdp(output_folder: str, project_number: str, project_info
             name = "%s-%s.dwg" % (safe, suf)
             general_names.add(name.lower())
             if os.path.exists(os.path.join(output_folder, name)):
-                body += _block("GENERAL", label, name)
+                body += _block("GENERAL", name, {"desc1": label})
 
-        # INTERCONNECTION DIAGRAMS = every other real dwg (the conduits)
+        # INTERCONNECTION DIAGRAMS = every other real dwg (the conduits), labeled with
+        # each conduit's own Description 1/2/3 (Conduit name / Source Name 1 /
+        # Destination Name 1), recorded when it was generated.
+        descriptions = _load_dwg_descriptions(output_folder)
         for dwg in _project_dwgs(output_folder):
             if dwg.lower() in general_names:
                 continue
-            label = os.path.splitext(dwg)[0]   # conduit sheet name as the subsection label
-            body += _block(_ICD_SECTION, label, dwg)
+            body += _block(_ICD_SECTION, dwg, descriptions.get(dwg))
 
         out_path = os.path.join(output_folder, safe + ".wdp")
         with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
