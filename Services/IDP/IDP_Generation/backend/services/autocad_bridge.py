@@ -865,7 +865,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
         # ── 8b. Title block ────────────────────────────────────────────────────
         title_block_values = _build_title_block_values(conduit_data, project_desc, seq_num)
         if title_block_values:
-            _set_title_block_attrs(model, title_block_values, warnings)
+            _set_title_block_attrs(doc, title_block_values, warnings)
 
         # ── 9. Save ───────────────────────────────────────────────────────────
         _log("Calling SaveAs...")
@@ -995,44 +995,56 @@ def _build_title_block_values(conduit_data: dict, project_desc: dict | None, seq
     return values
 
 
-def _set_title_block_attrs(model, values: dict, warnings: list) -> None:
+def _set_title_block_attrs(doc, values: dict, warnings: list) -> None:
     """Write straight to the title block's (TITLEBLOCK_NAME) own attributes -- no
     "Update Title Block" command, no dialog, nothing but a direct COM attribute set on
     the block reference the template already carries. `values` is {attribute tag:
-    text}, built by _build_title_block_values."""
+    text}, built by _build_title_block_values.
+
+    The title block lives on a PAPER SPACE layout (confirmed live: "Layout1", on layer
+    1_TITLEBLOCK), never in Model Space -- that's standard AutoCAD practice for a sheet
+    border/title block. Searches every non-Model layout's own block (a layout's entities
+    live in ITS OWN block table record, reached via Layout.Block, not ModelSpace)."""
     try:
-        for e in model:
+        for layout in doc.Layouts:
             try:
-                if e.ObjectName != "AcDbBlockReference":
+                if str(layout.Name).strip().lower() == "model":
                     continue
-                bname = str(getattr(e, "EffectiveName", "") or e.Name)
-                if bname.upper() != TITLEBLOCK_NAME.upper():
-                    continue
+                space = layout.Block
             except Exception:
                 continue
-            try:
-                attrs = e.GetAttributes()
-            except Exception as ex:
-                warnings.append(f"Title block found but could not read its attributes: {ex}")
-                return
-            tags = {}
-            for a in attrs:
+            for e in space:
                 try:
-                    tags[str(a.TagString).upper()] = a
+                    if e.ObjectName != "AcDbBlockReference":
+                        continue
+                    bname = str(getattr(e, "EffectiveName", "") or e.Name)
+                    if bname.upper() != TITLEBLOCK_NAME.upper():
+                        continue
                 except Exception:
-                    pass
-            set_count = 0
-            for tag, val in values.items():
-                a = tags.get(tag.upper())
-                if a is not None:
+                    continue
+                try:
+                    attrs = e.GetAttributes()
+                except Exception as ex:
+                    warnings.append(f"Title block found but could not read its attributes: {ex}")
+                    return
+                tags = {}
+                for a in attrs:
                     try:
-                        a.TextString = val
-                        set_count += 1
-                    except Exception as ex:
-                        warnings.append(f"Could not set title block attribute {tag!r}: {ex}")
-            _log(f"  title block: set {set_count}/{len(values)} attribute(s)")
-            return   # only one title block per sheet
-        warnings.append(f"No '{TITLEBLOCK_NAME}' block found on this sheet — title block not updated.")
+                        tags[str(a.TagString).upper()] = a
+                    except Exception:
+                        pass
+                set_count = 0
+                for tag, val in values.items():
+                    a = tags.get(tag.upper())
+                    if a is not None:
+                        try:
+                            a.TextString = val
+                            set_count += 1
+                        except Exception as ex:
+                            warnings.append(f"Could not set title block attribute {tag!r}: {ex}")
+                _log(f"  title block (layout {layout.Name!r}): set {set_count}/{len(values)} attribute(s)")
+                return   # only one title block per sheet
+        warnings.append(f"No '{TITLEBLOCK_NAME}' block found on any layout of this sheet — title block not updated.")
     except Exception as ex:
         warnings.append(f"Could not set title block attributes: {ex}")
 
