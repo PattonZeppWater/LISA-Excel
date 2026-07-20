@@ -1,6 +1,12 @@
 @echo off
 title LISA
-cd /d "%~dp0LISA"
+REM Work whether we're in a packaged bundle (app lives in a LISA\ subfolder) or in the
+REM repo checkout (app.py is right next to this .bat). Pick whichever actually has app.py.
+if exist "%~dp0LISA\app.py" (
+  cd /d "%~dp0LISA"
+) else (
+  cd /d "%~dp0"
+)
 
 REM The virtual environment is machine-specific and is NOT shipped in the zip.
 REM Check that it both EXISTS and actually RUNS -- a .venv copied from another PC

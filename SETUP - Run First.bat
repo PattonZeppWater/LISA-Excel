@@ -1,7 +1,13 @@
 @echo off
 setlocal enabledelayedexpansion
 title LISA Setup
-cd /d "%~dp0LISA"
+REM Work in a packaged bundle (app in a LISA\ subfolder) OR the repo checkout (app.py
+REM next to this .bat) -- set up the venv wherever app.py + requirements.txt actually live.
+if exist "%~dp0LISA\app.py" (
+  cd /d "%~dp0LISA"
+) else (
+  cd /d "%~dp0"
+)
 echo ============================================================
 echo    LISA Setup  -  run this ONCE  (needs internet)
 echo ============================================================
