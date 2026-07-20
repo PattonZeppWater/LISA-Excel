@@ -204,6 +204,28 @@ def _pt(x: float, y: float, z: float = 0.0):
 # another is mid-clear).  Serialize all generation through this lock.
 _GEN_LOCK = threading.Lock()
 
+# How many times (2s apart) to retry a COM call AutoCAD rejected because it's busy
+# (mid-command, or the moment a dialog is closing). 20 tries = ~40s -- generous enough
+# for a heavily-loaded session with several drawings open at once, since each one adds
+# to how long AutoCAD can stay non-quiescent.
+_ACAD_CONNECT_RETRIES = 20
+
+
+def _acad_busy_hint(msg: str) -> str:
+    """Append an actionable hint to a COM connection failure. GetActiveObject can only
+    ever reach ONE AutoCAD instance -- if several drawings are open (especially across
+    more than one AutoCAD.exe process, e.g. AutoCAD running in SDI mode), automation
+    calls can land on an instance that's busy the whole retry window and this is by far
+    the most common real-world cause, so say so instead of surfacing the bare COM
+    error text."""
+    return (
+        f"{msg}\n\n"
+        "This usually means AutoCAD was busy (mid-command, or a dialog open) for the "
+        "entire ~40s retry window, most often because more than one drawing is open at "
+        "once. Close any AutoCAD windows/documents you don't need, make sure the "
+        "remaining one is idle (no active command, no dialog), then try Generate again."
+    )
+
 
 def generate_dwg(*args, **kwargs) -> dict:
     """Thread-safe wrapper: serialize AutoCAD access across concurrent requests."""
@@ -743,9 +765,13 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
     # ── 1. Connect to a running AutoCAD instance ──────────────────────────────
     # Retry: on a multi-sheet run AutoCAD is often momentarily busy between sheets
     # (COM raises "Call was rejected by callee" / drops the Version call). A fresh
-    # GetActiveObject after a short wait almost always succeeds.
+    # GetActiveObject after a short wait almost always succeeds. GetActiveObject can
+    # only ever reach ONE AutoCAD instance -- if more than one is running (several
+    # drawings open, each its own process) automation calls can land on an instance
+    # that's mid-command and never quiesce for the whole retry window, so the error
+    # below spells out that specific, actionable cause rather than a bare COM error.
     acad_app, _conn_err = None, None
-    for _attempt in range(12):
+    for _attempt in range(_ACAD_CONNECT_RETRIES):
         try:
             acad_app = win32com.client.GetActiveObject("AutoCAD.Application")
             _ = str(acad_app.Version)
@@ -754,7 +780,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             acad_app, _conn_err = None, e
             time.sleep(2)
     if acad_app is None:
-        return _err(f"AutoCAD not running or not accessible: {_conn_err}")
+        return _err(_acad_busy_hint(f"AutoCAD not running or not accessible: {_conn_err}"))
     _log(f"  AutoCAD version: {acad_app.Version}")
 
     # ── 2. Close any previously open document at the target path ─────────────
@@ -774,7 +800,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
     # Retry the Open too: it's the other point AutoCAD rejects while busy. Re-acquire
     # the app handle between tries in case the connection was dropped.
     doc, _open_err = None, None
-    for _attempt in range(12):
+    for _attempt in range(_ACAD_CONNECT_RETRIES):
         try:
             doc = acad_app.Documents.Open(output_path)
             break
@@ -786,7 +812,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             except Exception:
                 pass
     if doc is None:
-        return _err(f"Failed to open template '{template_path}': {_open_err}")
+        return _err(_acad_busy_hint(f"Failed to open template '{template_path}': {_open_err}"))
     time.sleep(1.5)
     model = doc.ModelSpace
     _log(f"  Opened template copy — doc: {doc.Name}")
