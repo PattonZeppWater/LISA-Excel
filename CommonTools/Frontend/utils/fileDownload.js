@@ -1,7 +1,5 @@
-// Download a Blob (or string / ArrayBuffer / typed array) as a file in the browser.
-//   downloadBlob(data, filename)
-export function downloadBlob(data, filename) {
-  const blob = data instanceof Blob ? data : new Blob([data])
+// Trigger a browser download of a Blob (or File) under the given filename.
+export function downloadBlob(blob, filename) {
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
@@ -9,7 +7,5 @@ export function downloadBlob(data, filename) {
   document.body.appendChild(a)
   a.click()
   a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  URL.revokeObjectURL(url)
 }
-
-export default downloadBlob

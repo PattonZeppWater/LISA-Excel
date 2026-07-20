@@ -1,26 +1,21 @@
 import { useRef, useState, useCallback } from 'react'
 
-// Shared file-input hook: a hidden <input type=file> plus a drag-and-drop zone.
+// Reusable file-input helper: wires up a hidden <input type="file"> plus drag-and-drop
+// over a target element. onFile(file) is invoked with the first selected/dropped File.
 //
-//   const { inputProps, dropZoneProps, triggerPicker, dragging } = useFileInput(onFile)
-//
-//   inputProps    -> spread onto a hidden <input> (ref/type/hidden/onChange). Pass `accept` yourself.
-//   dropZoneProps -> spread onto the drop-zone element (onDragOver / onDragLeave / onDrop).
-//   triggerPicker -> opens the file picker (wire to the drop zone's onClick).
-//   dragging      -> true while a file is being dragged over the drop zone.
-//
-// onFile is called with the first selected/dropped File.
+// Usage:
+//   const { inputProps, dropZoneProps, triggerPicker, dragging } = useFileInput(loadFile)
+//   <div {...dropZoneProps} onClick={triggerPicker}> ... <input {...inputProps} accept=".xlsx" /> </div>
 export function useFileInput(onFile) {
   const inputRef = useRef(null)
   const [dragging, setDragging] = useState(false)
 
   const handleFiles = useCallback((files) => {
-    const f = files && files[0]
-    if (f && typeof onFile === 'function') onFile(f)
+    if (files && files.length > 0) onFile(files[0])
   }, [onFile])
 
   const triggerPicker = useCallback(() => {
-    inputRef.current?.click()
+    if (inputRef.current) inputRef.current.click()
   }, [])
 
   const inputProps = {
@@ -29,21 +24,20 @@ export function useFileInput(onFile) {
     style: { display: 'none' },
     onChange: (e) => {
       handleFiles(e.target.files)
-      e.target.value = '' // allow re-selecting the same file
+      e.target.value = '' // reset so selecting the same file again re-fires onChange
     },
   }
 
   const dropZoneProps = {
     onDragOver: (e) => { e.preventDefault(); setDragging(true) },
-    onDragLeave: () => setDragging(false),
+    onDragEnter: (e) => { e.preventDefault(); setDragging(true) },
+    onDragLeave: (e) => { e.preventDefault(); setDragging(false) },
     onDrop: (e) => {
       e.preventDefault()
       setDragging(false)
-      handleFiles(e.dataTransfer?.files)
+      handleFiles(e.dataTransfer.files)
     },
   }
 
   return { inputProps, dropZoneProps, triggerPicker, dragging }
 }
-
-export default useFileInput

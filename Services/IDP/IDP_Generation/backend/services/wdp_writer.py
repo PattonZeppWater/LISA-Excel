@@ -12,10 +12,17 @@ The project descriptor fields (*[1]..*[8]) are populated from the workbook's
 Engineer / Drafter). The project number also comes in directly from the UI and always
 wins for *[4] (it names the file too).
 """
-import os, glob, re, shutil, uuid
+import os, glob, re, shutil, uuid, json
 
 _TMPL_PATH = os.path.join(os.path.dirname(__file__), "idp_project_wdp.tmpl")
 _SUB_LINE  = "=====SUB=INTERCONNECTION DIAGRAMS"
+
+# Sidecar mapping {dwg filename -> {"desc1", "desc2", "desc3"}} for the .wdp's
+# per-drawing "Drawing Properties" description lines (Conduit name / Source Name 1 /
+# Destination Name 1). The .wdp is rebuilt from scratch from whatever .dwgs are in the
+# folder on every /generate call, so a conduit generated in an earlier call needs its
+# description remembered somewhere other than the .wdp itself.
+_DESC_STORE = "_idp_dwg_descriptions.json"
 
 # Bundled AIC project template (cleaned from the "For Claude" folder): the GENERAL sheets
 # G1-G3 + title-block map (.wdl) + drawing template (.wdt). Used only for "make it a project".
@@ -97,6 +104,72 @@ def _load_header(field_map: dict) -> str:
     return header.replace("\n", "\r\n") + "\r\n"
 
 
+def _desc_store_path(output_folder: str) -> str:
+    return os.path.join(output_folder, _DESC_STORE)
+
+
+def record_dwg_descriptions(output_folder: str, dwg_names, desc1="", desc2="", desc3="",
+                             cond_tag="", project_number="") -> None:
+    """Remember a drawing's Description 1/2/3 (Conduit name / Source Name 1 / Destination
+    Name 1), its owning Conduit tag, AND the project number it was generated under, in a
+    small JSON sidecar next to the .dwgs. Call once per generated sheet, right after it's
+    written.
+
+    cond_tag alone isn't enough to scope a project's drawing list: output folders get
+    reused across projects/runs (confirmed live -- a folder had 100+ drawings from unrelated
+    past tests, PLUS a same-conduit-different-project-number leftover that cond_tag-only
+    filtering let back in). project_number is what a later /generate call for a DIFFERENT
+    project can use to exclude an earlier project's drawings even when they happen to share
+    a conduit tag. Never raises."""
+    try:
+        if not output_folder or not os.path.isdir(output_folder):
+            return
+        path = _desc_store_path(output_folder)
+        store = {}
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    store = json.load(f)
+            except Exception:
+                store = {}
+        entry = {k: str(v).strip() for k, v in
+                 (("desc1", desc1), ("desc2", desc2), ("desc3", desc3),
+                  ("cond_tag", cond_tag), ("project_number", project_number))
+                 if str(v or "").strip()}
+        for name in dwg_names:
+            if entry:
+                store[name] = entry
+            else:
+                store.pop(name, None)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(store, f)
+    except Exception:
+        pass
+
+
+def _load_dwg_descriptions(output_folder: str) -> dict:
+    try:
+        path = _desc_store_path(output_folder)
+        if not os.path.exists(path):
+            return {}
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def _desc_lines(desc: dict | None) -> str:
+    """Up to three '===' Description-1/2/3 lines, in the order AutoCAD Electrical's .wdp
+    format expects (the Nth '===' line IS Description N, positionally) -- trailing blanks
+    are dropped, but a blank BETWEEN two filled slots is kept so a later description
+    doesn't shift into an earlier slot."""
+    desc = desc or {}
+    vals = [str(desc.get(k) or "").strip() for k in ("desc1", "desc2", "desc3")]
+    while vals and not vals[-1]:
+        vals.pop()
+    return "".join("===%s\r\n" % v for v in vals)
+
+
 def _project_dwgs(output_folder: str) -> list:
     """All real .dwg files in the output folder (sorted), excluding AutoCAD recover files."""
     names = []
@@ -108,12 +181,47 @@ def _project_dwgs(output_folder: str) -> list:
     return sorted(names, key=str.lower)
 
 
+def _norm_tag(s) -> str:
+    return str(s or "").strip().lower()
+
+
+def _workbook_dwgs(output_folder: str, valid_cond_tags, project_number=None) -> list:
+    """Every .dwg in the output folder that belongs to a conduit in the CURRENT workbook AND
+    was generated under THIS project number -- matched against what was recorded (via
+    record_dwg_descriptions) when that drawing was generated. Excludes any stray .dwg left
+    in the output folder by an unrelated run, by a conduit since removed from this workbook,
+    or (confirmed live: an output folder shared across projects) by an EARLIER project that
+    happened to reuse the same conduit tag -- cond_tag alone doesn't tell those apart, only
+    project_number does.
+
+    valid_cond_tags=None means "no workbook context" -- falls back to every .dwg on disk
+    (the old, unfiltered behavior), so a caller that doesn't have a conduit list handy still
+    gets something rather than an empty project. project_number=None/blank skips that half
+    of the filter (matches any project, or none recorded)."""
+    if valid_cond_tags is None:
+        return _project_dwgs(output_folder)
+    valid = {_norm_tag(t) for t in valid_cond_tags}
+    proj = _norm_tag(project_number)
+    descriptions = _load_dwg_descriptions(output_folder)
+    out = []
+    for dwg in _project_dwgs(output_folder):
+        entry = descriptions.get(dwg) or {}
+        if _norm_tag(entry.get("cond_tag")) not in valid:
+            continue
+        if proj and _norm_tag(entry.get("project_number")) != proj:
+            continue
+        out.append(dwg)
+    return out
+
+
 def write_project_wdp(output_folder: str, project_number: str, dwg_names=None,
-                      project_info=None) -> str | None:
+                      project_info=None, valid_cond_tags=None) -> str | None:
     """
-    Write '<project_number>.wdp' into output_folder, listing every generated drawing and
-    filling the project descriptor fields from project_info (the Project Description sheet).
-    Returns the .wdp path, or None if it couldn't be written (never raises).
+    Write '<project_number>.wdp' into output_folder, listing every drawing that belongs to
+    the current workbook (see _workbook_dwgs) and filling the project descriptor fields
+    from project_info (the Project Description sheet). Pass valid_cond_tags (every Cond_Tag
+    currently in ConduitIndex) so a stray .dwg from a different project/run never gets
+    listed. Returns the .wdp path, or None if it couldn't be written (never raises).
     """
     try:
         project_number = (project_number or "").strip()
@@ -122,13 +230,14 @@ def write_project_wdp(output_folder: str, project_number: str, dwg_names=None,
         safe = "".join(c for c in project_number if c.isalnum() or c in "-_. ").strip() or "IDP_Project"
 
         if dwg_names is None:
-            dwg_names = _project_dwgs(output_folder)
+            dwg_names = _workbook_dwgs(output_folder, valid_cond_tags, project_number)
         # never reference the .wdp itself; keep it stable/sorted
         dwg_names = sorted({n for n in dwg_names if n.lower().endswith(".dwg")}, key=str.lower)
 
+        descriptions = _load_dwg_descriptions(output_folder)
         body = _load_header(_field_map(project_number, project_info))
         for dwg in dwg_names:
-            body += _SUB_LINE + "\r\n" + dwg + "\r\n"
+            body += _SUB_LINE + "\r\n" + _desc_lines(descriptions.get(dwg)) + dwg + "\r\n"
 
         out_path = os.path.join(output_folder, safe + ".wdp")
         with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
@@ -147,9 +256,10 @@ def _safe(project_number: str) -> str:
     return "".join(c for c in (project_number or "") if c.isalnum() or c in "-_. ").strip() or "IDP_Project"
 
 
-def _block(section: str, label: str, dwg: str) -> str:
-    """One drawing entry in a .wdp: =SECTION / ===SUBSECTION / =====SUB=SECTION / file."""
-    return "=%s\r\n===%s\r\n=====SUB=%s\r\n%s\r\n" % (section, label, section, dwg)
+def _block(section: str, dwg: str, desc: dict = None) -> str:
+    """One drawing entry in a .wdp: =SECTION / =====SUB=SECTION / up to three ===Description
+    lines (Description 1/2/3, in order) / the filename."""
+    return "=%s\r\n=====SUB=%s\r\n%s%s\r\n" % (section, section, _desc_lines(desc), dwg)
 
 
 def _find_template_file(pattern: str):
@@ -191,11 +301,15 @@ def ensure_project_sheets(output_folder: str, project_number: str) -> list:
     return general
 
 
-def write_full_project_wdp(output_folder: str, project_number: str, project_info=None) -> str | None:
+def write_full_project_wdp(output_folder: str, project_number: str, project_info=None,
+                            valid_cond_tags=None) -> str | None:
     """Write '<project_number>.wdp' as a full sectioned AIC project: the GENERAL sheets
     (G1-G3 with COVER SHEET / DRAWING INDEX / SYMBOLS LEGEND labels) followed by every
-    generated conduit drawing under INTERCONNECTION DIAGRAMS. Descriptor fields come from the
-    Project Description sheet. Returns the path or None (never raises)."""
+    CURRENT-WORKBOOK conduit drawing under INTERCONNECTION DIAGRAMS -- see _workbook_dwgs;
+    pass valid_cond_tags (every Cond_Tag currently in ConduitIndex) so a stray .dwg left in
+    the output folder by a different project/run, or by a conduit since removed from this
+    workbook, is never listed. Descriptor fields come from the Project Description sheet.
+    Returns the path or None (never raises)."""
     try:
         if not output_folder or not os.path.isdir(output_folder):
             return None
@@ -207,14 +321,16 @@ def write_full_project_wdp(output_folder: str, project_number: str, project_info
             name = "%s-%s.dwg" % (safe, suf)
             general_names.add(name.lower())
             if os.path.exists(os.path.join(output_folder, name)):
-                body += _block("GENERAL", label, name)
+                body += _block("GENERAL", name, {"desc1": label})
 
-        # INTERCONNECTION DIAGRAMS = every other real dwg (the conduits)
-        for dwg in _project_dwgs(output_folder):
+        # INTERCONNECTION DIAGRAMS = every current-workbook conduit dwg, labeled with each
+        # conduit's own Description 1/2/3 (Conduit name / Source Name 1 / Destination Name
+        # 1), recorded when it was generated.
+        descriptions = _load_dwg_descriptions(output_folder)
+        for dwg in _workbook_dwgs(output_folder, valid_cond_tags, project_number):
             if dwg.lower() in general_names:
                 continue
-            label = os.path.splitext(dwg)[0]   # conduit sheet name as the subsection label
-            body += _block(_ICD_SECTION, label, dwg)
+            body += _block(_ICD_SECTION, dwg, descriptions.get(dwg))
 
         out_path = os.path.join(output_folder, safe + ".wdp")
         with open(out_path, "w", encoding="utf-8-sig", newline="") as f:
@@ -224,14 +340,22 @@ def write_full_project_wdp(output_folder: str, project_number: str, project_info
         return None
 
 
-def write_project_aepx(output_folder: str, project_number: str) -> str | None:
-    """Write '<project_number>.aepx' (ACADE project XML) listing every drawing in the folder
-    with sequential FileIDs, so AutoCAD Electrical opens the assembled project. Never raises."""
+def write_project_aepx(output_folder: str, project_number: str, valid_cond_tags=None) -> str | None:
+    """Write '<project_number>.aepx' (ACADE project XML) listing the GENERAL sheets plus
+    every current-workbook conduit drawing (see _workbook_dwgs) with sequential FileIDs, so
+    AutoCAD Electrical opens the assembled project. Pass valid_cond_tags (every Cond_Tag
+    currently in ConduitIndex) so a stray .dwg from a different project/run is never listed.
+    Never raises."""
     try:
         if not output_folder or not os.path.isdir(output_folder):
             return None
         safe = _safe(project_number)
-        dwgs = _project_dwgs(output_folder)
+        general = {
+            "%s-%s.dwg" % (safe, suf) for suf, _label in _GENERAL_SHEETS
+            if os.path.exists(os.path.join(output_folder, "%s-%s.dwg" % (safe, suf)))
+        }
+        conduits = _workbook_dwgs(output_folder, valid_cond_tags, project_number)
+        dwgs = sorted(general | {d for d in conduits if d not in general}, key=str.lower)
         entries = "".join(
             '<Drawing FilePath="%s" FileID="%d"/>' % (os.path.splitext(d)[0] + ".DWG", i + 1)
             for i, d in enumerate(dwgs)
