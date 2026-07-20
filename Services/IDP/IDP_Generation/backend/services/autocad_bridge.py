@@ -52,8 +52,19 @@ _TEMPLATE_DIR = os.path.normpath(
 )
 
 
+_REV_RE = re.compile(r"rev0*(\d+)", re.IGNORECASE)
+
+
 def _get_template_path() -> str | None:
-    """Return the path to the most recently modified .dwg template, or None."""
+    """Return the path to the current .dwg template, or None.
+
+    Picks the highest "RevNN" in the filename when more than one candidate has one
+    (e.g. IDP.TEMPLATE.Rev04.dwg beats Rev03) -- NOT filesystem mtime. A fresh git
+    checkout writes every file at ~the same instant, so "most recently modified"
+    resolves to whichever file the filesystem happened to list last: effectively
+    arbitrary, and it silently picked an old/incomplete template that broke block
+    inserts and left the title block missing. Only when nothing has a "RevNN" does
+    this fall back to mtime, so a single unversioned template still works."""
     override = os.getenv("IDP_TEMPLATE_PATH")
     if override:
         return override
@@ -66,8 +77,12 @@ def _get_template_path() -> str | None:
         return None
     if not candidates:
         return None
-    latest = max(candidates, key=lambda f: os.path.getmtime(os.path.join(_TEMPLATE_DIR, f)))
-    return os.path.join(_TEMPLATE_DIR, latest)
+    revved = [(int(m.group(1)), f) for f in candidates if (m := _REV_RE.search(f))]
+    if revved:
+        chosen = max(revved, key=lambda t: t[0])[1]
+    else:
+        chosen = max(candidates, key=lambda f: os.path.getmtime(os.path.join(_TEMPLATE_DIR, f)))
+    return os.path.join(_TEMPLATE_DIR, chosen)
 
 
 # ── Tunable layout constants ──────────────────────────────────────────────────
@@ -203,6 +218,28 @@ def _pt(x: float, y: float, z: float = 0.0):
 # race on ActiveDocument (one call's Documents.Add changes the active doc while
 # another is mid-clear).  Serialize all generation through this lock.
 _GEN_LOCK = threading.Lock()
+
+# How many times (2s apart) to retry a COM call AutoCAD rejected because it's busy
+# (mid-command, or the moment a dialog is closing). 20 tries = ~40s -- generous enough
+# for a heavily-loaded session with several drawings open at once, since each one adds
+# to how long AutoCAD can stay non-quiescent.
+_ACAD_CONNECT_RETRIES = 20
+
+
+def _acad_busy_hint(msg: str) -> str:
+    """Append an actionable hint to a COM connection failure. GetActiveObject can only
+    ever reach ONE AutoCAD instance -- if several drawings are open (especially across
+    more than one AutoCAD.exe process, e.g. AutoCAD running in SDI mode), automation
+    calls can land on an instance that's busy the whole retry window and this is by far
+    the most common real-world cause, so say so instead of surfacing the bare COM
+    error text."""
+    return (
+        f"{msg}\n\n"
+        "This usually means AutoCAD was busy (mid-command, or a dialog open) for the "
+        "entire ~40s retry window, most often because more than one drawing is open at "
+        "once. Close any AutoCAD windows/documents you don't need, make sure the "
+        "remaining one is idle (no active command, no dialog), then try Generate again."
+    )
 
 
 def generate_dwg(*args, **kwargs) -> dict:
@@ -705,7 +742,9 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
                  block_heights: dict | None = None,
                  cont_state: str | None = None,
                  cont_prev: str | None = None,
-                 cont_next: str | None = None) -> dict:
+                 cont_next: str | None = None,
+                 project_desc: dict | None = None,
+                 seq_num=None) -> dict:
     """
     Generate one AutoCAD DWG for a single conduit (or one sheet of a multi-sheet
     conduit). For continuation sheets the caller passes:
@@ -713,6 +752,16 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
                    / Continuation_End); None for a normal single-sheet conduit.
       cont_prev / cont_next — adjacent sheet filenames for the CONT_Previous_DWG /
                    CONT_Next_DWG link attributes.
+      project_desc — the workbook's "Project Description" sheet, as {"lines": [...]}
+                   (positionally Owner/Job Title/Content/Proj No/Status/Date/Engineer/
+                   Drafter — same shape wdp_writer uses for the .wdp's *[1]..*[8]).
+      seq_num — this conduit's sheet number in the project sequence, written to the
+                   title block's SHEET attribute.
+
+    Both feed _set_title_block_attrs, which writes straight to the title block's own
+    attributes using the same tag mapping AutoCAD Electrical's "Update Title Block"
+    command uses (_Templates/Project/default.wdt) — so every drawing's title block is
+    populated as part of generation itself, with no separate update step and no dialog.
 
     Returns:
         { "success": bool, "output_path": str, "warnings": list, "error": str|None }
@@ -731,9 +780,13 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
     # ── 1. Connect to a running AutoCAD instance ──────────────────────────────
     # Retry: on a multi-sheet run AutoCAD is often momentarily busy between sheets
     # (COM raises "Call was rejected by callee" / drops the Version call). A fresh
-    # GetActiveObject after a short wait almost always succeeds.
+    # GetActiveObject after a short wait almost always succeeds. GetActiveObject can
+    # only ever reach ONE AutoCAD instance -- if more than one is running (several
+    # drawings open, each its own process) automation calls can land on an instance
+    # that's mid-command and never quiesce for the whole retry window, so the error
+    # below spells out that specific, actionable cause rather than a bare COM error.
     acad_app, _conn_err = None, None
-    for _attempt in range(12):
+    for _attempt in range(_ACAD_CONNECT_RETRIES):
         try:
             acad_app = win32com.client.GetActiveObject("AutoCAD.Application")
             _ = str(acad_app.Version)
@@ -742,7 +795,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             acad_app, _conn_err = None, e
             time.sleep(2)
     if acad_app is None:
-        return _err(f"AutoCAD not running or not accessible: {_conn_err}")
+        return _err(_acad_busy_hint(f"AutoCAD not running or not accessible: {_conn_err}"))
     _log(f"  AutoCAD version: {acad_app.Version}")
 
     # ── 2. Close any previously open document at the target path ─────────────
@@ -762,7 +815,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
     # Retry the Open too: it's the other point AutoCAD rejects while busy. Re-acquire
     # the app handle between tries in case the connection was dropped.
     doc, _open_err = None, None
-    for _attempt in range(12):
+    for _attempt in range(_ACAD_CONNECT_RETRIES):
         try:
             doc = acad_app.Documents.Open(output_path)
             break
@@ -774,7 +827,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             except Exception:
                 pass
     if doc is None:
-        return _err(f"Failed to open template '{template_path}': {_open_err}")
+        return _err(_acad_busy_hint(f"Failed to open template '{template_path}': {_open_err}"))
     time.sleep(1.5)
     model = doc.ModelSpace
     _log(f"  Opened template copy — doc: {doc.Name}")
@@ -808,6 +861,11 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             _fill_ref_docs_table(model, ref_doc_rows or [], dev_rows or [], warnings)
         else:
             _log("  ref_docs table: skipped (no ref_doc_rows or dev_rows)")
+
+        # ── 8b. Title block ────────────────────────────────────────────────────
+        title_block_values = _build_title_block_values(conduit_data, project_desc, seq_num)
+        if title_block_values:
+            _set_title_block_attrs(doc, title_block_values, warnings)
 
         # ── 9. Save ───────────────────────────────────────────────────────────
         _log("Calling SaveAs...")
@@ -910,6 +968,85 @@ def _clear_model_space(model, warnings: list):
         _log(f"_clear_model_space: deleted={deleted} preserved={preserved} skipped={skipped}")
     except Exception as ex:
         warnings.append(f"Could not clear model space: {ex}")
+
+
+def _build_title_block_values(conduit_data: dict, project_desc: dict | None, seq_num) -> dict:
+    """Map our data onto the title block's own attribute tags, per
+    _Templates/Project/default.wdt's "BLOCK = WML-SI_TITLEBLOCK_SCHEMATIC" section --
+    the same tags AutoCAD Electrical's "Update Title Block" writes to:
+        OWNER/JOB_TITLE/CONTENT/PROJECT_NO/STATUS/DATE/ENGINEER/DRAFTER = LINE1..LINE8
+        DESC1/DESC2/DESC3 = DD1/DD2/DD3 (per-drawing description)
+        SHEET = SHEET (this drawing's project sheet number)
+    Only includes tags we actually have a non-blank value for, so a missing Project
+    Description sheet or conduit field just leaves that attribute at its template
+    default instead of blanking it out."""
+    values = {}
+    lines = (project_desc or {}).get("lines") or []
+    for tag, idx in (("OWNER", 0), ("JOB_TITLE", 1), ("CONTENT", 2), ("PROJECT_NO", 3),
+                      ("STATUS", 4), ("DATE", 5), ("ENGINEER", 6), ("DRAFTER", 7)):
+        if idx < len(lines) and str(lines[idx] or "").strip():
+            values[tag] = str(lines[idx]).strip()
+    for tag, key in (("DESC1", "Cdt_Name"), ("DESC2", "Src_Name01"), ("DESC3", "Dst_Name01")):
+        val = (conduit_data or {}).get(key)
+        if str(val or "").strip():
+            values[tag] = str(val).strip()
+    if seq_num is not None and str(seq_num).strip():
+        values["SHEET"] = str(seq_num).strip()
+    return values
+
+
+def _set_title_block_attrs(doc, values: dict, warnings: list) -> None:
+    """Write straight to the title block's (TITLEBLOCK_NAME) own attributes -- no
+    "Update Title Block" command, no dialog, nothing but a direct COM attribute set on
+    the block reference the template already carries. `values` is {attribute tag:
+    text}, built by _build_title_block_values.
+
+    The title block lives on a PAPER SPACE layout (confirmed live: "Layout1", on layer
+    1_TITLEBLOCK), never in Model Space -- that's standard AutoCAD practice for a sheet
+    border/title block. Searches every non-Model layout's own block (a layout's entities
+    live in ITS OWN block table record, reached via Layout.Block, not ModelSpace)."""
+    try:
+        for layout in doc.Layouts:
+            try:
+                if str(layout.Name).strip().lower() == "model":
+                    continue
+                space = layout.Block
+            except Exception:
+                continue
+            for e in space:
+                try:
+                    if e.ObjectName != "AcDbBlockReference":
+                        continue
+                    bname = str(getattr(e, "EffectiveName", "") or e.Name)
+                    if bname.upper() != TITLEBLOCK_NAME.upper():
+                        continue
+                except Exception:
+                    continue
+                try:
+                    attrs = e.GetAttributes()
+                except Exception as ex:
+                    warnings.append(f"Title block found but could not read its attributes: {ex}")
+                    return
+                tags = {}
+                for a in attrs:
+                    try:
+                        tags[str(a.TagString).upper()] = a
+                    except Exception:
+                        pass
+                set_count = 0
+                for tag, val in values.items():
+                    a = tags.get(tag.upper())
+                    if a is not None:
+                        try:
+                            a.TextString = val
+                            set_count += 1
+                        except Exception as ex:
+                            warnings.append(f"Could not set title block attribute {tag!r}: {ex}")
+                _log(f"  title block (layout {layout.Name!r}): set {set_count}/{len(values)} attribute(s)")
+                return   # only one title block per sheet
+        warnings.append(f"No '{TITLEBLOCK_NAME}' block found on any layout of this sheet — title block not updated.")
+    except Exception as ex:
+        warnings.append(f"Could not set title block attributes: {ex}")
 
 
 def _insert_block(model, x: float, y: float, block_name: str, warnings: list):
