@@ -324,10 +324,11 @@ def generate():
     }
 
     # Remember this conduit's Drawing Properties Description 1/2/3 (Conduit name /
-    # Source Name 1 / Destination Name 1) for every sheet just written, so the .wdp
-    # writer -- which rebuilds its drawing list from scratch from whatever .dwgs are on
-    # disk -- can still label this conduit's drawing(s) on a LATER /generate call for a
-    # different conduit.
+    # Source Name 1 / Destination Name 1) AND its Conduit tag for every sheet just written,
+    # so the .wdp writer -- which rebuilds its drawing list from scratch from whatever .dwgs
+    # are on disk -- can still label this conduit's drawing(s) on a LATER /generate call for
+    # a different conduit, and can tell them apart from a stray .dwg some other project left
+    # in the same output folder.
     if not errors and out_paths:
         wdp_writer.record_dwg_descriptions(
             output_folder,
@@ -335,7 +336,18 @@ def generate():
             desc1=conduit_data.get("Cdt_Name"),
             desc2=conduit_data.get("Src_Name01"),
             desc3=conduit_data.get("Dst_Name01"),
+            cond_tag=cond_tag,
         )
+
+    # Every Cond_Tag currently in the loaded workbook's ConduitIndex -- passed to the .wdp/
+    # .aepx writers so they only ever list drawings that belong to THIS workbook (plus the
+    # GENERAL sheets), never a stray .dwg left in the output folder by a different project/
+    # run or by a conduit since removed from this one.
+    valid_cond_tags = [
+        str(r.get("Cond_Tag")).strip()
+        for r in conduit_index
+        if str(r.get("Cond_Tag") or "").strip()
+    ]
 
     # Write/refresh the AutoCAD Electrical project file(s) in the output folder, named after
     # the project number. Best-effort: never let a project-file problem fail the generation.
@@ -345,12 +357,15 @@ def generate():
             # sectioned .wdp (GENERAL + INTERCONNECTION DIAGRAMS) and a matching .aepx.
             wdp_writer.ensure_project_sheets(output_folder, project_number)
             result["wdp_path"]  = wdp_writer.write_full_project_wdp(
-                output_folder, project_number, project_info=project_desc)
-            result["aepx_path"] = wdp_writer.write_project_aepx(output_folder, project_number)
+                output_folder, project_number, project_info=project_desc,
+                valid_cond_tags=valid_cond_tags)
+            result["aepx_path"] = wdp_writer.write_project_aepx(
+                output_folder, project_number, valid_cond_tags=valid_cond_tags)
         else:
             # Plain drawing list under INTERCONNECTION DIAGRAMS (unchanged behavior).
             result["wdp_path"] = wdp_writer.write_project_wdp(
-                output_folder, project_number, project_info=project_desc)
+                output_folder, project_number, project_info=project_desc,
+                valid_cond_tags=valid_cond_tags)
 
     return jsonify(result)
 
