@@ -52,8 +52,19 @@ _TEMPLATE_DIR = os.path.normpath(
 )
 
 
+_REV_RE = re.compile(r"rev0*(\d+)", re.IGNORECASE)
+
+
 def _get_template_path() -> str | None:
-    """Return the path to the most recently modified .dwg template, or None."""
+    """Return the path to the current .dwg template, or None.
+
+    Picks the highest "RevNN" in the filename when more than one candidate has one
+    (e.g. IDP.TEMPLATE.Rev04.dwg beats Rev03) -- NOT filesystem mtime. A fresh git
+    checkout writes every file at ~the same instant, so "most recently modified"
+    resolves to whichever file the filesystem happened to list last: effectively
+    arbitrary, and it silently picked an old/incomplete template that broke block
+    inserts and left the title block missing. Only when nothing has a "RevNN" does
+    this fall back to mtime, so a single unversioned template still works."""
     override = os.getenv("IDP_TEMPLATE_PATH")
     if override:
         return override
@@ -66,8 +77,12 @@ def _get_template_path() -> str | None:
         return None
     if not candidates:
         return None
-    latest = max(candidates, key=lambda f: os.path.getmtime(os.path.join(_TEMPLATE_DIR, f)))
-    return os.path.join(_TEMPLATE_DIR, latest)
+    revved = [(int(m.group(1)), f) for f in candidates if (m := _REV_RE.search(f))]
+    if revved:
+        chosen = max(revved, key=lambda t: t[0])[1]
+    else:
+        chosen = max(candidates, key=lambda f: os.path.getmtime(os.path.join(_TEMPLATE_DIR, f)))
+    return os.path.join(_TEMPLATE_DIR, chosen)
 
 
 # ── Tunable layout constants ──────────────────────────────────────────────────

@@ -325,11 +325,13 @@ def generate():
     }
 
     # Remember this conduit's Drawing Properties Description 1/2/3 (Conduit name /
-    # Source Name 1 / Destination Name 1) AND its Conduit tag for every sheet just written,
-    # so the .wdp writer -- which rebuilds its drawing list from scratch from whatever .dwgs
-    # are on disk -- can still label this conduit's drawing(s) on a LATER /generate call for
-    # a different conduit, and can tell them apart from a stray .dwg some other project left
-    # in the same output folder.
+    # Source Name 1 / Destination Name 1), its Conduit tag, AND the project number it was
+    # generated under, for every sheet just written -- so the .wdp writer, which rebuilds
+    # its drawing list from scratch from whatever .dwgs are on disk, can still label this
+    # conduit's drawing(s) on a LATER /generate call for a different conduit, and can tell
+    # them apart both from an unrelated stray .dwg AND from an EARLIER project that reused
+    # the same output folder and happened to share a conduit tag (project_number is what
+    # tells those two apart -- cond_tag alone isn't enough).
     if not errors and out_paths:
         wdp_writer.record_dwg_descriptions(
             output_folder,
@@ -338,6 +340,7 @@ def generate():
             desc2=conduit_data.get("Src_Name01"),
             desc3=conduit_data.get("Dst_Name01"),
             cond_tag=cond_tag,
+            project_number=project_number,
         )
 
     # Every Cond_Tag currently in the loaded workbook's ConduitIndex -- passed to the .wdp/

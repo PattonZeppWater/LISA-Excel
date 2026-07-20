@@ -109,12 +109,18 @@ def _desc_store_path(output_folder: str) -> str:
 
 
 def record_dwg_descriptions(output_folder: str, dwg_names, desc1="", desc2="", desc3="",
-                             cond_tag="") -> None:
+                             cond_tag="", project_number="") -> None:
     """Remember a drawing's Description 1/2/3 (Conduit name / Source Name 1 / Destination
-    Name 1) AND its owning Conduit tag in a small JSON sidecar next to the .dwgs. Call once
-    per generated sheet, right after it's written. The cond_tag is what lets the project
-    writer later tell "a drawing from THIS workbook" apart from a stray .dwg some other
-    project left in the same output folder. Never raises."""
+    Name 1), its owning Conduit tag, AND the project number it was generated under, in a
+    small JSON sidecar next to the .dwgs. Call once per generated sheet, right after it's
+    written.
+
+    cond_tag alone isn't enough to scope a project's drawing list: output folders get
+    reused across projects/runs (confirmed live -- a folder had 100+ drawings from unrelated
+    past tests, PLUS a same-conduit-different-project-number leftover that cond_tag-only
+    filtering let back in). project_number is what a later /generate call for a DIFFERENT
+    project can use to exclude an earlier project's drawings even when they happen to share
+    a conduit tag. Never raises."""
     try:
         if not output_folder or not os.path.isdir(output_folder):
             return
@@ -127,7 +133,8 @@ def record_dwg_descriptions(output_folder: str, dwg_names, desc1="", desc2="", d
             except Exception:
                 store = {}
         entry = {k: str(v).strip() for k, v in
-                 (("desc1", desc1), ("desc2", desc2), ("desc3", desc3), ("cond_tag", cond_tag))
+                 (("desc1", desc1), ("desc2", desc2), ("desc3", desc3),
+                  ("cond_tag", cond_tag), ("project_number", project_number))
                  if str(v or "").strip()}
         for name in dwg_names:
             if entry:
@@ -178,23 +185,33 @@ def _norm_tag(s) -> str:
     return str(s or "").strip().lower()
 
 
-def _workbook_dwgs(output_folder: str, valid_cond_tags) -> list:
-    """Every .dwg in the output folder that belongs to a conduit in the CURRENT workbook --
-    matched by Cond_Tag against what was recorded (via record_dwg_descriptions) when that
-    drawing was generated. Excludes any stray .dwg left in the output folder by a different
-    workbook/project, or by a conduit that has since been removed from this one.
+def _workbook_dwgs(output_folder: str, valid_cond_tags, project_number=None) -> list:
+    """Every .dwg in the output folder that belongs to a conduit in the CURRENT workbook AND
+    was generated under THIS project number -- matched against what was recorded (via
+    record_dwg_descriptions) when that drawing was generated. Excludes any stray .dwg left
+    in the output folder by an unrelated run, by a conduit since removed from this workbook,
+    or (confirmed live: an output folder shared across projects) by an EARLIER project that
+    happened to reuse the same conduit tag -- cond_tag alone doesn't tell those apart, only
+    project_number does.
 
     valid_cond_tags=None means "no workbook context" -- falls back to every .dwg on disk
-    (the old, unfiltered behavior), so a caller that doesn't have a conduit list handy
-    still gets something rather than an empty project."""
+    (the old, unfiltered behavior), so a caller that doesn't have a conduit list handy still
+    gets something rather than an empty project. project_number=None/blank skips that half
+    of the filter (matches any project, or none recorded)."""
     if valid_cond_tags is None:
         return _project_dwgs(output_folder)
     valid = {_norm_tag(t) for t in valid_cond_tags}
+    proj = _norm_tag(project_number)
     descriptions = _load_dwg_descriptions(output_folder)
-    return [
-        dwg for dwg in _project_dwgs(output_folder)
-        if _norm_tag((descriptions.get(dwg) or {}).get("cond_tag")) in valid
-    ]
+    out = []
+    for dwg in _project_dwgs(output_folder):
+        entry = descriptions.get(dwg) or {}
+        if _norm_tag(entry.get("cond_tag")) not in valid:
+            continue
+        if proj and _norm_tag(entry.get("project_number")) != proj:
+            continue
+        out.append(dwg)
+    return out
 
 
 def write_project_wdp(output_folder: str, project_number: str, dwg_names=None,
@@ -213,7 +230,7 @@ def write_project_wdp(output_folder: str, project_number: str, dwg_names=None,
         safe = "".join(c for c in project_number if c.isalnum() or c in "-_. ").strip() or "IDP_Project"
 
         if dwg_names is None:
-            dwg_names = _workbook_dwgs(output_folder, valid_cond_tags)
+            dwg_names = _workbook_dwgs(output_folder, valid_cond_tags, project_number)
         # never reference the .wdp itself; keep it stable/sorted
         dwg_names = sorted({n for n in dwg_names if n.lower().endswith(".dwg")}, key=str.lower)
 
@@ -310,7 +327,7 @@ def write_full_project_wdp(output_folder: str, project_number: str, project_info
         # conduit's own Description 1/2/3 (Conduit name / Source Name 1 / Destination Name
         # 1), recorded when it was generated.
         descriptions = _load_dwg_descriptions(output_folder)
-        for dwg in _workbook_dwgs(output_folder, valid_cond_tags):
+        for dwg in _workbook_dwgs(output_folder, valid_cond_tags, project_number):
             if dwg.lower() in general_names:
                 continue
             body += _block(_ICD_SECTION, dwg, descriptions.get(dwg))
@@ -337,7 +354,7 @@ def write_project_aepx(output_folder: str, project_number: str, valid_cond_tags=
             "%s-%s.dwg" % (safe, suf) for suf, _label in _GENERAL_SHEETS
             if os.path.exists(os.path.join(output_folder, "%s-%s.dwg" % (safe, suf)))
         }
-        conduits = _workbook_dwgs(output_folder, valid_cond_tags)
+        conduits = _workbook_dwgs(output_folder, valid_cond_tags, project_number)
         dwgs = sorted(general | {d for d in conduits if d not in general}, key=str.lower)
         entries = "".join(
             '<Drawing FilePath="%s" FileID="%d"/>' % (os.path.splitext(d)[0] + ".DWG", i + 1)
