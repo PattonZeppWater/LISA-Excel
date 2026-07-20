@@ -705,7 +705,9 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
                  block_heights: dict | None = None,
                  cont_state: str | None = None,
                  cont_prev: str | None = None,
-                 cont_next: str | None = None) -> dict:
+                 cont_next: str | None = None,
+                 project_desc: dict | None = None,
+                 seq_num=None) -> dict:
     """
     Generate one AutoCAD DWG for a single conduit (or one sheet of a multi-sheet
     conduit). For continuation sheets the caller passes:
@@ -713,6 +715,16 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
                    / Continuation_End); None for a normal single-sheet conduit.
       cont_prev / cont_next — adjacent sheet filenames for the CONT_Previous_DWG /
                    CONT_Next_DWG link attributes.
+      project_desc — the workbook's "Project Description" sheet, as {"lines": [...]}
+                   (positionally Owner/Job Title/Content/Proj No/Status/Date/Engineer/
+                   Drafter — same shape wdp_writer uses for the .wdp's *[1]..*[8]).
+      seq_num — this conduit's sheet number in the project sequence, written to the
+                   title block's SHEET attribute.
+
+    Both feed _set_title_block_attrs, which writes straight to the title block's own
+    attributes using the same tag mapping AutoCAD Electrical's "Update Title Block"
+    command uses (_Templates/Project/default.wdt) — so every drawing's title block is
+    populated as part of generation itself, with no separate update step and no dialog.
 
     Returns:
         { "success": bool, "output_path": str, "warnings": list, "error": str|None }
@@ -808,6 +820,11 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             _fill_ref_docs_table(model, ref_doc_rows or [], dev_rows or [], warnings)
         else:
             _log("  ref_docs table: skipped (no ref_doc_rows or dev_rows)")
+
+        # ── 8b. Title block ────────────────────────────────────────────────────
+        title_block_values = _build_title_block_values(conduit_data, project_desc, seq_num)
+        if title_block_values:
+            _set_title_block_attrs(model, title_block_values, warnings)
 
         # ── 9. Save ───────────────────────────────────────────────────────────
         _log("Calling SaveAs...")
@@ -910,6 +927,73 @@ def _clear_model_space(model, warnings: list):
         _log(f"_clear_model_space: deleted={deleted} preserved={preserved} skipped={skipped}")
     except Exception as ex:
         warnings.append(f"Could not clear model space: {ex}")
+
+
+def _build_title_block_values(conduit_data: dict, project_desc: dict | None, seq_num) -> dict:
+    """Map our data onto the title block's own attribute tags, per
+    _Templates/Project/default.wdt's "BLOCK = WML-SI_TITLEBLOCK_SCHEMATIC" section --
+    the same tags AutoCAD Electrical's "Update Title Block" writes to:
+        OWNER/JOB_TITLE/CONTENT/PROJECT_NO/STATUS/DATE/ENGINEER/DRAFTER = LINE1..LINE8
+        DESC1/DESC2/DESC3 = DD1/DD2/DD3 (per-drawing description)
+        SHEET = SHEET (this drawing's project sheet number)
+    Only includes tags we actually have a non-blank value for, so a missing Project
+    Description sheet or conduit field just leaves that attribute at its template
+    default instead of blanking it out."""
+    values = {}
+    lines = (project_desc or {}).get("lines") or []
+    for tag, idx in (("OWNER", 0), ("JOB_TITLE", 1), ("CONTENT", 2), ("PROJECT_NO", 3),
+                      ("STATUS", 4), ("DATE", 5), ("ENGINEER", 6), ("DRAFTER", 7)):
+        if idx < len(lines) and str(lines[idx] or "").strip():
+            values[tag] = str(lines[idx]).strip()
+    for tag, key in (("DESC1", "Cdt_Name"), ("DESC2", "Src_Name01"), ("DESC3", "Dst_Name01")):
+        val = (conduit_data or {}).get(key)
+        if str(val or "").strip():
+            values[tag] = str(val).strip()
+    if seq_num is not None and str(seq_num).strip():
+        values["SHEET"] = str(seq_num).strip()
+    return values
+
+
+def _set_title_block_attrs(model, values: dict, warnings: list) -> None:
+    """Write straight to the title block's (TITLEBLOCK_NAME) own attributes -- no
+    "Update Title Block" command, no dialog, nothing but a direct COM attribute set on
+    the block reference the template already carries. `values` is {attribute tag:
+    text}, built by _build_title_block_values."""
+    try:
+        for e in model:
+            try:
+                if e.ObjectName != "AcDbBlockReference":
+                    continue
+                bname = str(getattr(e, "EffectiveName", "") or e.Name)
+                if bname.upper() != TITLEBLOCK_NAME.upper():
+                    continue
+            except Exception:
+                continue
+            try:
+                attrs = e.GetAttributes()
+            except Exception as ex:
+                warnings.append(f"Title block found but could not read its attributes: {ex}")
+                return
+            tags = {}
+            for a in attrs:
+                try:
+                    tags[str(a.TagString).upper()] = a
+                except Exception:
+                    pass
+            set_count = 0
+            for tag, val in values.items():
+                a = tags.get(tag.upper())
+                if a is not None:
+                    try:
+                        a.TextString = val
+                        set_count += 1
+                    except Exception as ex:
+                        warnings.append(f"Could not set title block attribute {tag!r}: {ex}")
+            _log(f"  title block: set {set_count}/{len(values)} attribute(s)")
+            return   # only one title block per sheet
+        warnings.append(f"No '{TITLEBLOCK_NAME}' block found on this sheet — title block not updated.")
+    except Exception as ex:
+        warnings.append(f"Could not set title block attributes: {ex}")
 
 
 def _insert_block(model, x: float, y: float, block_name: str, warnings: list):

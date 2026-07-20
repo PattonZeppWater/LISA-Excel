@@ -305,7 +305,8 @@ def generate():
             ref_doc_rows=ref_doc_rows,          # supporting-docs table on every sheet
             dev_rows=dev_rows,                  # deviation notes (#→text) on every sheet
             block_heights=block_heights,
-            cont_state=state, cont_prev=prev_name, cont_next=next_name)
+            cont_state=state, cont_prev=prev_name, cont_next=next_name,
+            project_desc=project_desc, seq_num=seq_num)
 
         out_paths.append(sheet_paths[k])
         all_warnings += (r.get("warnings") or [])
