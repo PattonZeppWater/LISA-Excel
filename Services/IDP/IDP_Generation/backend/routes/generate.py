@@ -196,16 +196,17 @@ def generate():
     make_project   = bool(body.get("make_project"))
 
     if conduit_ident is None:
-        return jsonify({"error": "'conduit_ident' is required"}), 400
+        return jsonify({"error": "No conduit was selected to generate. Pick a conduit and try again."}), 400
     if not output_folder:
-        return jsonify({"error": "'output_folder' is required"}), 400
+        return jsonify({"error": "No output folder is set. Choose where the drawings should be saved, then try again."}), 400
     if make_project and not project_number:
         return jsonify({"error": "A project number is required to generate a project. "
                                  "Enter one in the Project number field or uncheck 'Make it a project'."}), 400
 
     conduit_row = svc_parser.get_conduit_row(conduit_index, int(conduit_ident))
     if conduit_row is None:
-        return jsonify({"error": f"conduit_ident {conduit_ident} not found in conduit_index"}), 404
+        return jsonify({"error": f"The selected conduit (#{conduit_ident}) wasn't found in the "
+                                 f"loaded workbook. Re-load the workbook and try again."}), 404
 
     cond_tag = conduit_row.get("Cond_Tag") or f"CONDUIT_{conduit_ident}"
 
@@ -287,12 +288,16 @@ def generate():
             # First sheet carries the full conduit schedule (all conductors).
             cdata_k, state = conduit_data, autocad_bridge.CONT_STATE_START
         else:
-            # Continuation sheets show only their own conductors: strip the derived
-            # Fill slots and re-derive them from just this sheet's fill rows.
-            rows_k = fill_rows[a:b]
+            # Continuation sheets carry NO conduit schedule -- the full fill table lives
+            # only on the first sheet. Build conduit_data from a Fill-stripped copy and do
+            # NOT re-derive: build_conduit_data stops at the first missing Fill01_Type, so
+            # cdata_k gets the conduit identity (name/size/type, source/dest names) but zero
+            # Fill## slots. Each sheet is a fresh template copy whose Conduit block Fill##
+            # attributes all default to blank, so writing none leaves the schedule empty.
+            # (Previously this re-derived a PARTIAL schedule from just this sheet's rows,
+            # which is exactly the stray-context-on-continuation-pages bug.)
             cond_copy = {key: val for key, val in conduit_row.items()
                          if not str(key).startswith("Fill")}
-            svc_mapper._derive_fill_slots(cond_copy, rows_k)
             cdata_k = svc_parser.build_conduit_data(cond_copy)
             state = (autocad_bridge.CONT_STATE_END if k == n_sheets - 1
                      else autocad_bridge.CONT_STATE_MIDDLE)

@@ -242,10 +242,89 @@ def _acad_busy_hint(msg: str) -> str:
     )
 
 
+# COM HRESULTs AutoCAD raises when it's momentarily busy -- mid-command, redrawing, or
+# still finishing the previous drawing during a rapid Generate All. These are transient:
+# the correct response is to wait a beat and retry, not to fail the sheet.
+#   -2147418111 = RPC_E_CALL_REJECTED   ("Call was rejected by callee.")
+#   -2147417846 = RPC_E_SERVERCALL_RETRYLATER
+_COM_BUSY_HRESULTS = (-2147418111, -2147417846)
+
+
+def _is_busy_error(e) -> bool:
+    """True if e is a transient 'AutoCAD is busy' COM error (worth retrying). Accepts an
+    exception or an already-stringified error message."""
+    try:
+        if isinstance(e, BaseException) and getattr(e, "args", None):
+            if e.args[0] in _COM_BUSY_HRESULTS:
+                return True
+    except Exception:
+        pass
+    s = str(e).lower()
+    return ("rejected by callee" in s or "retrylater" in s
+            or "server is busy" in s or "call was rejected" in s)
+
+
+def _com_retry(fn, tries=8, delay=0.4, any_error=False):
+    """Run fn(); if it raises a transient 'AutoCAD busy' COM error, wait and retry up to
+    `tries` times. Re-raises the last error if none succeed; a non-busy error is raised
+    immediately (not retried).
+
+    any_error=True also retries NON-busy exceptions -- for idempotent, non-critical COM
+    calls (e.g. AcadTable.SetText) that, during a busy Generate All, can fail with a
+    transient dynamic-dispatch error ('Item.SetText') that isn't a classic busy HRESULT.
+    A genuinely persistent failure still exhausts the retries and re-raises, so nothing
+    is masked -- it just becomes resilient to transient hiccups."""
+    last = None
+    for _ in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            if not any_error and not _is_busy_error(e):
+                raise
+            last = e
+            time.sleep(delay)
+    if last is not None:
+        raise last
+
+
+def _wait_quiescent(app, timeout=15.0):
+    """Poll until AutoCAD reports it's idle, or timeout. Best-effort -- never raises.
+    Called before each sheet so a rapid Generate All doesn't start hammering AutoCAD
+    while it's still finishing the previous drawing (the main source of 'Call was
+    rejected by callee')."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if app.GetAcadState().IsQuiescent:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return False
+
+
+_SHEET_RETRIES = 3   # whole-sheet attempts before giving up
+
+
 def generate_dwg(*args, **kwargs) -> dict:
-    """Thread-safe wrapper: serialize AutoCAD access across concurrent requests."""
+    """Thread-safe wrapper: serialize AutoCAD access across concurrent requests. Retries
+    the whole sheet if it fails, since almost every generation failure during a rapid
+    Generate All is a transient 'AutoCAD busy' COM error and a fresh re-render (from a
+    clean template copy, after waiting for AutoCAD to go idle) succeeds. Each attempt is
+    fully idempotent -- it re-copies the template and overwrites the output -- so a retry
+    can't leave a half-drawn sheet. A genuinely broken conduit still fails all attempts
+    and returns its error, so nothing is masked; it just isn't randomly skipped."""
     with _GEN_LOCK:
-        return _generate_dwg_impl(*args, **kwargs)
+        r = None
+        for attempt in range(_SHEET_RETRIES):
+            r = _generate_dwg_impl(*args, **kwargs)
+            if r.get("success"):
+                return r
+            if attempt < _SHEET_RETRIES - 1:
+                _log(f"generate_dwg: sheet failed ({r.get('error')!r}); re-rendering the "
+                     f"whole sheet (attempt {attempt + 2}/{_SHEET_RETRIES})")
+                time.sleep(2.0)
+        return r
 
 
 def _is_bigtb(nm) -> bool:
@@ -798,6 +877,12 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
         return _err(_acad_busy_hint(f"AutoCAD not running or not accessible: {_conn_err}"))
     _log(f"  AutoCAD version: {acad_app.Version}")
 
+    # Wait for AutoCAD to go idle before we start hammering it. On a rapid Generate All
+    # it's often still finishing the previous sheet; starting now is what most often
+    # triggers "Call was rejected by callee" mid-render. Best-effort (proceeds after the
+    # timeout regardless; the retries below are the backstop).
+    _wait_quiescent(acad_app)
+
     # ── 2. Close any previously open document at the target path ─────────────
     _close_if_open(acad_app, output_path)
 
@@ -869,7 +954,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
 
         # ── 9. Save ───────────────────────────────────────────────────────────
         _log("Calling SaveAs...")
-        doc.SaveAs(output_path)
+        _com_retry(lambda: doc.SaveAs(output_path))   # retry a transient busy rejection
 
         if not os.path.exists(output_path):
             return _err(f"SaveAs completed but file not found at: {output_path}")
@@ -898,7 +983,10 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             doc.Close(False)
         except Exception:
             pass
-        return _err(f"DWG generation error: {e}", warnings)
+        return _err(
+            f"Something went wrong while drawing this sheet in AutoCAD, so it wasn't saved. "
+            f"Make sure AutoCAD is open and idle (no active command or dialog) and the output "
+            f"folder is writable, then try again. Technical detail: {e}", warnings)
 
 
 # ── AutoCAD helpers ───────────────────────────────────────────────────────────
@@ -924,16 +1012,16 @@ def _clear_model_space(model, warnings: list):
     the template's leftover one.
     """
     try:
-        count = model.Count
-        entities = [model.Item(i) for i in range(count)]
+        count = _com_retry(lambda: model.Count)
+        entities = [_com_retry(lambda: model.Item(i)) for i in range(count)]
         deleted = preserved = skipped = 0
         for e in entities:
             try:
                 obj_name   = ""
                 layer_name = ""
                 try:
-                    obj_name   = str(e.ObjectName)
-                    layer_name = str(e.Layer).upper()
+                    obj_name   = str(_com_retry(lambda: e.ObjectName))
+                    layer_name = str(_com_retry(lambda: e.Layer)).upper()
                 except Exception:
                     pass
 
@@ -947,7 +1035,7 @@ def _clear_model_space(model, warnings: list):
                         except Exception:
                             bname = ""
                     if bname.upper() == CONDUIT_NAME.upper():
-                        e.Delete()
+                        _com_retry(lambda: e.Delete())
                         deleted += 1
                     else:
                         preserved += 1
@@ -961,7 +1049,7 @@ def _clear_model_space(model, warnings: list):
                     preserved += 1
                     continue
 
-                e.Delete()
+                _com_retry(lambda: e.Delete())
                 deleted += 1
             except Exception:
                 skipped += 1
@@ -1023,7 +1111,7 @@ def _set_title_block_attrs(doc, values: dict, warnings: list) -> None:
                 except Exception:
                     continue
                 try:
-                    attrs = e.GetAttributes()
+                    attrs = _com_retry(lambda: e.GetAttributes())
                 except Exception as ex:
                     warnings.append(f"Title block found but could not read its attributes: {ex}")
                     return
@@ -1059,31 +1147,49 @@ def _insert_block(model, x: float, y: float, block_name: str, warnings: list):
     """
     insertion_pt = _pt(x, y)
 
-    try:
-        count_before = model.Count
-    except Exception:
-        count_before = -1
-
+    # Insert, retrying a transient "AutoCAD busy" rejection. We can't just wrap InsertBlock
+    # in _com_retry blindly: the AE COM marshaller sometimes RAISES even though the insert
+    # actually succeeded (count went up). So on each raise we check the count -- if it grew,
+    # the block WAS placed (recover it, don't retry, or we'd double-insert); if it didn't
+    # grow and the error is a transient busy rejection, wait and retry so the block isn't
+    # silently skipped (which used to leave a "successful" sheet missing symbols).
     ref = None
-    try:
-        ref = model.InsertBlock(insertion_pt, block_name, 1.0, 1.0, 1.0, 0.0)
-        _log(f"_insert_block '{block_name}' at ({x},{y}) — normal return")
-    except Exception as e:
-        _log(f"_insert_block '{block_name}' — COM return raised: {e}")
+    last_err = None
+    for attempt in range(8):
         try:
-            count_after = model.Count
+            count_before = model.Count
+        except Exception:
+            count_before = -1
+        try:
+            ref = model.InsertBlock(insertion_pt, block_name, 1.0, 1.0, 1.0, 0.0)
+            _log(f"_insert_block '{block_name}' at ({x},{y}) — normal return")
+            break
+        except Exception as e:
+            last_err = e
+            _log(f"_insert_block '{block_name}' — COM return raised: {e}")
+            try:
+                count_after = model.Count
+            except Exception:
+                count_after = count_before
             if count_after > count_before:
-                ref = model.Item(count_after - 1)
+                ref = model.Item(count_after - 1)   # succeeded despite the raise
                 _log(f"_insert_block '{block_name}' — recovered via model[-1]")
-            else:
-                warnings.append(f"Block '{block_name}' insert failed (count unchanged): {e}")
-                return None
-        except Exception as e2:
-            warnings.append(f"Block '{block_name}' unrecoverable: {e} / {e2}")
-            return None
+                break
+            if _is_busy_error(e) and attempt < 7:
+                time.sleep(0.5)   # AutoCAD busy -- wait and retry the insert
+                continue
+            break
 
     if ref is None:
-        warnings.append(f"Block '{block_name}' insert returned None")
+        if _is_busy_error(last_err):
+            warnings.append(
+                f"Couldn't place the '{block_name}' symbol -- AutoCAD stayed busy through "
+                f"several retries. Technical detail: {last_err}")
+        else:
+            warnings.append(
+                f"Couldn't place the '{block_name}' symbol. This usually means that block "
+                f"isn't in the current template's block library (check the symbol name in the "
+                f"workbook matches a block in the template). Technical detail: {last_err}")
         return None
 
     try:
@@ -1188,55 +1294,77 @@ def _normalize_color(value):
 def _set_attrs(block_ref, attr_map: dict, warnings: list):
     """Set block attributes from attr_map (case-insensitive tag matching)."""
     try:
-        attrs = block_ref.GetAttributes()
+        attrs = _com_retry(lambda: block_ref.GetAttributes())
     except Exception as e:
         warnings.append(f"GetAttributes() failed: {e}")
         _log(f"  GetAttributes() failed: {e}")
         return
 
     if not attrs:
-        warnings.append("Block has no variable attributes")
-        _log("  GetAttributes() returned empty")
+        # Not an error: some symbol blocks (simple connectors, etc.) simply have no
+        # fill-in attributes, so there's nothing to set. Log it for debugging but don't
+        # surface it as a user-facing warning -- it's just noise in the generation log.
+        _log("  GetAttributes() returned empty (block has no attributes -- nothing to set)")
         return
+
+    # Read each attribute's tag ONCE, resiliently. att.TagString is itself a COM call
+    # that can transiently fail ("GetAttributes.TagString") while AutoCAD is busy during
+    # a rapid Generate All. It used to be read unprotected in several places (the debug
+    # log, the error message, the "no match" message), so one transient tag-read hiccup
+    # threw an uncaught error and killed the WHOLE sheet. Reading it here with retry, and
+    # reusing the cached string everywhere below, makes a tag-read hiccup a per-attribute
+    # skip at worst -- never a lost sheet.
+    tagged = []
+    for att in attrs:
+        try:
+            tag = str(_com_retry(lambda: att.TagString, any_error=True))
+        except Exception as e:
+            _log(f"    (could not read an attribute tag, skipping it: {e})")
+            continue
+        tagged.append((att, tag))
 
     upper_map = {k.upper(): v for k, v in attr_map.items() if v is not None}
     # Single Rating cell fills EVERY rating-type attribute the block carries
     # (Rating, FU_Rating, Rating1, DISC_Rating, ... anything whose tag has "RATING").
     rating_val = upper_map.get("RATING")
 
-    _log(f"  _set_attrs: {len(attrs)} attr(s), {len(upper_map)} map key(s)")
-    _log(f"    tags : {[a.TagString for a in attrs]}")
+    _log(f"  _set_attrs: {len(tagged)} attr(s), {len(upper_map)} map key(s)")
+    _log(f"    tags : {[t for _, t in tagged]}")
     _log(f"    keys : {list(upper_map.keys())}")
 
+    def _write(att, val):
+        # Retry the actual COM writes -- these are the calls that intermittently hit
+        # "Call was rejected by callee" during a busy Generate All.
+        _com_retry(lambda: setattr(att, "TextString", val))
+        _com_retry(lambda: att.Update())
+
     assigned = 0
-    for att in attrs:
+    for att, tag in tagged:
+        key = tag.upper()
         try:
-            key = att.TagString.upper()
             if key in upper_map:
                 val = str(upper_map[key])
                 if "COLOR" in key or "COLOUR" in key:
                     val = _normalize_color(val)   # GREEN -> GRN safety net
-                att.TextString = val
-                att.Update()
+                _write(att, val)
                 assigned += 1
-                _log(f"    SET  {att.TagString!r} = {val!r}")
+                _log(f"    SET  {tag!r} = {val!r}")
             elif "RATING" in key and rating_val is not None:
                 val = str(rating_val)
-                att.TextString = val
-                att.Update()
+                _write(att, val)
                 assigned += 1
-                _log(f"    SET* {att.TagString!r} = {val!r}  (rating fill-all)")
+                _log(f"    SET* {tag!r} = {val!r}  (rating fill-all)")
             else:
-                _log(f"    SKIP {att.TagString!r}")
+                _log(f"    SKIP {tag!r}")
         except Exception as e:
-            warnings.append(f"Could not set attr '{att.TagString}': {e}")
-            _log(f"    ERR  {att.TagString!r}: {e}")
+            warnings.append(f"Could not set attr '{tag}': {e}")
+            _log(f"    ERR  {tag!r}: {e}")
 
-    _log(f"  assigned={assigned}/{len(attrs)}")
+    _log(f"  assigned={assigned}/{len(tagged)}")
 
     if assigned == 0 and upper_map:
         warnings.append(
-            f"No attrs matched. Tags: {[a.TagString for a in attrs]}. "
+            f"No attrs matched. Tags: {[t for _, t in tagged]}. "
             f"Keys: {list(upper_map.keys())}"
         )
 
@@ -1515,25 +1643,54 @@ def _spare_type_attr(v):
 
 
 def _renumber_inst_terms(attrs: dict, loop: dict, side: str) -> dict:
-    """An instrument's numeric terminal boxes (Term01..Term08) always generate BLANK --
-    never the block's "XX" placeholder and never sequential numbers -- for 2-term and
-    4-term instruments alike. The powered boxes still show L / N via LinePlus /
-    NeutralMinus (a POWER instrument mirrors the Term 1 / Term 2 cells, e.g. "L" / "N")."""
+    """Set an instrument's terminal boxes correctly for its physical block:
+
+    * 2-wire instruments (Inst_2W*, Inst_Sensor_2W*) have ONLY Term01/Term02 to show their
+      two terminals and NO LinePlus/NeutralMinus boxes. Their terminal values therefore
+      MUST land in Term01/Term02 -- this is Term 1 / Term 2 (e.g. the field device's two
+      terminals, or L/N for a 2-wire POWER instrument). (Previously these were blanked like
+      4-term instruments, which -- since a 2-wire block has no LinePlus/NeutralMinus -- left
+      the terminals showing nothing at all.)
+
+    * 4-term (and any other) instruments: the numeric Term boxes generate BLANK and the
+      powered boxes show L / N via LinePlus / NeutralMinus (a POWER instrument mirrors the
+      Term 1 / Term 2 values, e.g. "L" / "N"; any other type shows plain L / N).
+
+    A term value equal to _HIDE_TERM_SENTINEL is left in place here; _maybe_hide_terms
+    (run after the group builders) blanks it, so the "Hide from Generation" toggle still
+    works and the slot position is preserved."""
     blk = loop.get("src_block" if side == "src" else "dst_block") or ""
-    if "inst" not in str(blk).lower():
+    blk_l = str(blk).lower()
+    if "inst" not in blk_l:
         return attrs
-    # Blank EVERY numeric terminal box (Term01..Term08 and Term1..Term8) so none shows the
-    # block's "XX" placeholder default or a sequential number -- for 2-term and 4-term
-    # instruments alike, regardless of type or whether a wire lands on that terminal.
+    tkey = "Wire{n}_" + ("SrcTermNum" if side == "src" else "DstTermNum")
+
+    if "2w" in blk_l:
+        # 2-wire instrument: put the two terminal values in Term01/Term02 (Term1/Term2);
+        # blank the unused Term03..Term08. Do NOT touch LinePlus/NeutralMinus (this block
+        # has none). None -> "" so we never write the literal "None"; a hide-sentinel is
+        # preserved for _maybe_hide_terms to blank.
+        t1 = loop.get(tkey.format(n=1))
+        t2 = loop.get(tkey.format(n=2))
+        t1 = "" if t1 is None else t1
+        t2 = "" if t2 is None else t2
+        attrs["Term01"] = t1
+        attrs["Term1"] = t1
+        attrs["Term02"] = t2
+        attrs["Term2"] = t2
+        for n in range(3, 9):
+            attrs[f"Term{n}"] = ""
+            attrs[f"Term{n:02d}"] = ""
+        return attrs
+
+    # 4-term (and any other) instrument: blank every numeric terminal box so none shows
+    # the block's "XX" placeholder or a sequential number.
     for n in range(1, 9):
         attrs[f"Term{n}"] = ""
         attrs[f"Term{n:02d}"] = ""
-    # Powered L / N boxes: always overwrite the block's "L/+" / "N/-" default. A POWER
-    # instrument uses the Term 1 / Term 2 cell values (typically "L" / "N"); any other
-    # type shows plain L / N.
+    # Powered L / N boxes: always overwrite the block's "L/+" / "N/-" default.
     t1 = t2 = None
     if str(loop.get("Wire_Type") or "").strip().upper() == "POWER":
-        tkey = "Wire{n}_" + ("SrcTermNum" if side == "src" else "DstTermNum")
         t1 = loop.get(tkey.format(n=1))
         t2 = loop.get(tkey.format(n=2))
     attrs["LinePlus"] = t1 if (t1 not in (None, "") and t1 != _HIDE_TERM_SENTINEL) else "L"
@@ -1634,24 +1791,18 @@ def _group_terms(group: list, side: str) -> list:
 
 
 def _build_src_attrs_group(group: list) -> dict:
-    """Source-side attrs for a single instrument spanning the whole group. Instrument
-    terminal boxes (Term01-08) generate BLANK -- never numbered -- for 2-term and 4-term
-    instruments alike; the powered L / N boxes come from _build_src_attrs."""
-    attrs = _build_src_attrs(group[0])
-    for idx in range(1, 9):
-        attrs[f"Term{idx}"] = ""
-        attrs[f"Term{idx:02d}"] = ""
-    return attrs
+    """Source-side attrs for a single instrument spanning the whole group. Terminal-box
+    handling (blank for 4-term, Term01/02 filled for 2-wire) is done by _renumber_inst_terms
+    inside _build_src_attrs -- don't re-blank here, or a 2-wire instrument's Term01/02 would
+    be wiped back out."""
+    return _build_src_attrs(group[0])
 
 
 def _build_dst_attrs_group(group: list) -> dict:
-    """Destination-side attrs for a single instrument spanning the whole group.
-    Terminal boxes (Term01-08) generate BLANK for 2-term and 4-term instruments alike."""
-    attrs = _build_dst_attrs(group[0])
-    for idx in range(1, 9):
-        attrs[f"Term{idx}"] = ""
-        attrs[f"Term{idx:02d}"] = ""
-    return attrs
+    """Destination-side attrs for a single instrument spanning the whole group. Terminal-box
+    handling is done by _renumber_inst_terms inside _build_dst_attrs -- don't re-blank here,
+    or a 2-wire instrument's Term01/02 would be wiped back out."""
+    return _build_dst_attrs(group[0])
 
 
 def _build_side_group_tb(group: list, side: str) -> dict:
@@ -1757,14 +1908,15 @@ def _fill_ref_docs_table(model, ref_doc_rows: list, dev_rows: list, warnings: li
             break
         try:
             if rd.get("dwg_num") is not None and _REF_COL_DWG < table_cols:
-                table.SetText(row_idx, _REF_COL_DWG, str(rd["dwg_num"]))
+                _com_retry(lambda: table.SetText(row_idx, _REF_COL_DWG, str(rd["dwg_num"])), any_error=True)
             if rd.get("description") is not None and _REF_COL_DESC < table_cols:
-                table.SetText(row_idx, _REF_COL_DESC, str(rd["description"]))
+                _com_retry(lambda: table.SetText(row_idx, _REF_COL_DESC, str(rd["description"])), any_error=True)
             if rd.get("manufacturer") is not None and _REF_COL_MFR < table_cols:
-                table.SetText(row_idx, _REF_COL_MFR, str(rd["manufacturer"]))
+                _com_retry(lambda: table.SetText(row_idx, _REF_COL_MFR, str(rd["manufacturer"])), any_error=True)
             written += 1
         except Exception as ex:
-            warnings.append(f"Ref docs: could not write row {i} to table: {ex}")
+            warnings.append(f"Ref docs: could not write supporting-document row {i + 1} to the "
+                            f"table (AutoCAD kept rejecting the write). Detail: {ex}")
 
     _log(f"_fill_ref_docs_table: wrote {written} ref doc row(s)")
 
@@ -1787,10 +1939,11 @@ def _fill_ref_docs_table(model, ref_doc_rows: list, dev_rows: list, warnings: li
             # catalog deviation number the conduit selected. The selection only decides
             # which notes appear (and their order); the drawing renumbers them 1,2,3,…
             if _DEV_COL_NUM < table_cols:
-                table.SetText(row_idx, _DEV_COL_NUM, str(i + 1))
+                _com_retry(lambda: table.SetText(row_idx, _DEV_COL_NUM, str(i + 1)), any_error=True)
             if _DEV_COL_TEXT < table_cols and note is not None:
-                table.SetText(row_idx, _DEV_COL_TEXT, str(note))
+                _com_retry(lambda: table.SetText(row_idx, _DEV_COL_TEXT, str(note)), any_error=True)
             dwritten += 1
         except Exception as ex:
-            warnings.append(f"Deviations: could not write note {i}: {ex}")
+            warnings.append(f"Deviations: could not write note {i + 1} to the table "
+                            f"(AutoCAD kept rejecting the write). Detail: {ex}")
     _log(f"_fill_ref_docs_table: wrote {dwritten} deviation note(s)")
