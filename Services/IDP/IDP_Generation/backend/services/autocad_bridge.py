@@ -898,7 +898,10 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             doc.Close(False)
         except Exception:
             pass
-        return _err(f"DWG generation error: {e}", warnings)
+        return _err(
+            f"Something went wrong while drawing this sheet in AutoCAD, so it wasn't saved. "
+            f"Make sure AutoCAD is open and idle (no active command or dialog) and the output "
+            f"folder is writable, then try again. Technical detail: {e}", warnings)
 
 
 # ── AutoCAD helpers ───────────────────────────────────────────────────────────
@@ -1076,14 +1079,23 @@ def _insert_block(model, x: float, y: float, block_name: str, warnings: list):
                 ref = model.Item(count_after - 1)
                 _log(f"_insert_block '{block_name}' — recovered via model[-1]")
             else:
-                warnings.append(f"Block '{block_name}' insert failed (count unchanged): {e}")
+                warnings.append(
+                    f"Couldn't place the '{block_name}' symbol on the drawing. This usually "
+                    f"means that block isn't in the current template's block library "
+                    f"(check the symbol name in the workbook matches a block in the template), "
+                    f"or AutoCAD was busy. Technical detail: {e}")
                 return None
         except Exception as e2:
-            warnings.append(f"Block '{block_name}' unrecoverable: {e} / {e2}")
+            warnings.append(
+                f"Couldn't place the '{block_name}' symbol and AutoCAD didn't respond. Make "
+                f"sure AutoCAD is open and idle (no command or dialog active), then try again. "
+                f"Technical detail: {e} / {e2}")
             return None
 
     if ref is None:
-        warnings.append(f"Block '{block_name}' insert returned None")
+        warnings.append(
+            f"Couldn't place the '{block_name}' symbol (AutoCAD returned nothing). Verify that "
+            f"block exists in the template's block library and try again.")
         return None
 
     try:
@@ -1515,25 +1527,54 @@ def _spare_type_attr(v):
 
 
 def _renumber_inst_terms(attrs: dict, loop: dict, side: str) -> dict:
-    """An instrument's numeric terminal boxes (Term01..Term08) always generate BLANK --
-    never the block's "XX" placeholder and never sequential numbers -- for 2-term and
-    4-term instruments alike. The powered boxes still show L / N via LinePlus /
-    NeutralMinus (a POWER instrument mirrors the Term 1 / Term 2 cells, e.g. "L" / "N")."""
+    """Set an instrument's terminal boxes correctly for its physical block:
+
+    * 2-wire instruments (Inst_2W*, Inst_Sensor_2W*) have ONLY Term01/Term02 to show their
+      two terminals and NO LinePlus/NeutralMinus boxes. Their terminal values therefore
+      MUST land in Term01/Term02 -- this is Term 1 / Term 2 (e.g. the field device's two
+      terminals, or L/N for a 2-wire POWER instrument). (Previously these were blanked like
+      4-term instruments, which -- since a 2-wire block has no LinePlus/NeutralMinus -- left
+      the terminals showing nothing at all.)
+
+    * 4-term (and any other) instruments: the numeric Term boxes generate BLANK and the
+      powered boxes show L / N via LinePlus / NeutralMinus (a POWER instrument mirrors the
+      Term 1 / Term 2 values, e.g. "L" / "N"; any other type shows plain L / N).
+
+    A term value equal to _HIDE_TERM_SENTINEL is left in place here; _maybe_hide_terms
+    (run after the group builders) blanks it, so the "Hide from Generation" toggle still
+    works and the slot position is preserved."""
     blk = loop.get("src_block" if side == "src" else "dst_block") or ""
-    if "inst" not in str(blk).lower():
+    blk_l = str(blk).lower()
+    if "inst" not in blk_l:
         return attrs
-    # Blank EVERY numeric terminal box (Term01..Term08 and Term1..Term8) so none shows the
-    # block's "XX" placeholder default or a sequential number -- for 2-term and 4-term
-    # instruments alike, regardless of type or whether a wire lands on that terminal.
+    tkey = "Wire{n}_" + ("SrcTermNum" if side == "src" else "DstTermNum")
+
+    if "2w" in blk_l:
+        # 2-wire instrument: put the two terminal values in Term01/Term02 (Term1/Term2);
+        # blank the unused Term03..Term08. Do NOT touch LinePlus/NeutralMinus (this block
+        # has none). None -> "" so we never write the literal "None"; a hide-sentinel is
+        # preserved for _maybe_hide_terms to blank.
+        t1 = loop.get(tkey.format(n=1))
+        t2 = loop.get(tkey.format(n=2))
+        t1 = "" if t1 is None else t1
+        t2 = "" if t2 is None else t2
+        attrs["Term01"] = t1
+        attrs["Term1"] = t1
+        attrs["Term02"] = t2
+        attrs["Term2"] = t2
+        for n in range(3, 9):
+            attrs[f"Term{n}"] = ""
+            attrs[f"Term{n:02d}"] = ""
+        return attrs
+
+    # 4-term (and any other) instrument: blank every numeric terminal box so none shows
+    # the block's "XX" placeholder or a sequential number.
     for n in range(1, 9):
         attrs[f"Term{n}"] = ""
         attrs[f"Term{n:02d}"] = ""
-    # Powered L / N boxes: always overwrite the block's "L/+" / "N/-" default. A POWER
-    # instrument uses the Term 1 / Term 2 cell values (typically "L" / "N"); any other
-    # type shows plain L / N.
+    # Powered L / N boxes: always overwrite the block's "L/+" / "N/-" default.
     t1 = t2 = None
     if str(loop.get("Wire_Type") or "").strip().upper() == "POWER":
-        tkey = "Wire{n}_" + ("SrcTermNum" if side == "src" else "DstTermNum")
         t1 = loop.get(tkey.format(n=1))
         t2 = loop.get(tkey.format(n=2))
     attrs["LinePlus"] = t1 if (t1 not in (None, "") and t1 != _HIDE_TERM_SENTINEL) else "L"
@@ -1634,24 +1675,18 @@ def _group_terms(group: list, side: str) -> list:
 
 
 def _build_src_attrs_group(group: list) -> dict:
-    """Source-side attrs for a single instrument spanning the whole group. Instrument
-    terminal boxes (Term01-08) generate BLANK -- never numbered -- for 2-term and 4-term
-    instruments alike; the powered L / N boxes come from _build_src_attrs."""
-    attrs = _build_src_attrs(group[0])
-    for idx in range(1, 9):
-        attrs[f"Term{idx}"] = ""
-        attrs[f"Term{idx:02d}"] = ""
-    return attrs
+    """Source-side attrs for a single instrument spanning the whole group. Terminal-box
+    handling (blank for 4-term, Term01/02 filled for 2-wire) is done by _renumber_inst_terms
+    inside _build_src_attrs -- don't re-blank here, or a 2-wire instrument's Term01/02 would
+    be wiped back out."""
+    return _build_src_attrs(group[0])
 
 
 def _build_dst_attrs_group(group: list) -> dict:
-    """Destination-side attrs for a single instrument spanning the whole group.
-    Terminal boxes (Term01-08) generate BLANK for 2-term and 4-term instruments alike."""
-    attrs = _build_dst_attrs(group[0])
-    for idx in range(1, 9):
-        attrs[f"Term{idx}"] = ""
-        attrs[f"Term{idx:02d}"] = ""
-    return attrs
+    """Destination-side attrs for a single instrument spanning the whole group. Terminal-box
+    handling is done by _renumber_inst_terms inside _build_dst_attrs -- don't re-blank here,
+    or a 2-wire instrument's Term01/02 would be wiped back out."""
+    return _build_dst_attrs(group[0])
 
 
 def _build_side_group_tb(group: list, side: str) -> dict:

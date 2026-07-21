@@ -51,6 +51,18 @@ def _serialize(v):
     return str(v).strip()
 
 
+def _norm_header(s) -> str:
+    """Normalise a header cell / alias name for tolerant matching: collapse every run of
+    whitespace (spaces, tabs, and -- crucially -- the embedded newlines Excel puts in
+    wrapped header cells) to a single space, trim the ends, and lower-case.
+
+    Without this, a header typed/wrapped as "Conduit\\nType" or "Conduit  Type" fails to
+    match the alias "Conduit Type", so Cond_Type (and Cond_Size, etc.) silently parse as
+    blank -- the intermittent "conduit type won't fill in" symptom, which was actually
+    all-or-nothing per workbook depending on how that header cell happened to be typed."""
+    return " ".join(str(s or "").split()).lower()
+
+
 def _build_col_map(header_row: tuple) -> dict:
     """
     Return {header_name: zero_based_index} from a header row tuple.
@@ -80,13 +92,20 @@ def _apply_aliases(col_map: dict, aliases: dict) -> dict:
     """
     Extend col_map with internal-name keys for any workbook column that has an alias.
     The original workbook key is preserved so write-back via _write_sheet still works.
-    Alias keys are stripped before lookup to match how _build_col_map normalises headers.
+    Matching is whitespace/newline/case tolerant (see _norm_header) so a wrapped or
+    oddly-spaced header still binds its alias.
     """
     result = dict(col_map)
+    # normalised header -> column index (first occurrence wins)
+    norm_lookup = {}
+    for actual_key, idx in col_map.items():
+        nk = _norm_header(actual_key)
+        if nk not in norm_lookup:
+            norm_lookup[nk] = idx
     for wb_name, internal_name in aliases.items():
-        normalised = wb_name.strip()
-        if normalised in col_map and internal_name not in result:
-            result[internal_name] = col_map[normalised]
+        nk = _norm_header(wb_name)
+        if nk in norm_lookup and internal_name not in result:
+            result[internal_name] = norm_lookup[nk]
     return result
 
 
@@ -370,9 +389,9 @@ def _find_header_row(all_rows: list, aliases: dict) -> int:
     one of its cells matches a known alias key.  Falls back to row index 1
     (the original assumption) if nothing matches.
     """
-    known = {k.strip() for k in (aliases or {})}
+    known = {_norm_header(k) for k in (aliases or {})}
     for idx in range(min(5, len(all_rows))):
-        cells = {str(c).strip() for c in all_rows[idx] if c is not None}
+        cells = {_norm_header(c) for c in all_rows[idx] if c is not None}
         if cells & known:
             return idx
     return 1  # original default
@@ -405,8 +424,16 @@ def _parse_sheet(ws, required_cols: set, aliases: dict = None) -> list:
 
     missing = required_cols - set(col_map.keys())
     if missing:
+        # Report the HUMAN header names the user actually sees in the workbook, not the
+        # internal field names (e.g. "Conduit Name", not "Cond_Tag").
+        friendly = []
+        for m in sorted(missing):
+            headers = sorted({wb for wb, internal in (aliases or {}).items() if internal == m})
+            friendly.append(headers[0] if headers else m)
         raise ValueError(
-            f"Sheet '{ws.title}' is missing required column(s): {', '.join(sorted(missing))}"
+            f"The '{ws.title}' sheet is missing a required column: "
+            f"{', '.join(friendly)}. Check that the header row has that column and it's "
+            f"spelled as expected."
         )
 
     rows = []
