@@ -1103,7 +1103,7 @@ def _set_title_block_attrs(doc, values: dict, warnings: list) -> None:
                 except Exception:
                     continue
                 try:
-                    attrs = e.GetAttributes()
+                    attrs = _com_retry(lambda: e.GetAttributes())
                 except Exception as ex:
                     warnings.append(f"Title block found but could not read its attributes: {ex}")
                     return
@@ -1290,13 +1290,29 @@ def _set_attrs(block_ref, attr_map: dict, warnings: list):
         _log("  GetAttributes() returned empty (block has no attributes -- nothing to set)")
         return
 
+    # Read each attribute's tag ONCE, resiliently. att.TagString is itself a COM call
+    # that can transiently fail ("GetAttributes.TagString") while AutoCAD is busy during
+    # a rapid Generate All. It used to be read unprotected in several places (the debug
+    # log, the error message, the "no match" message), so one transient tag-read hiccup
+    # threw an uncaught error and killed the WHOLE sheet. Reading it here with retry, and
+    # reusing the cached string everywhere below, makes a tag-read hiccup a per-attribute
+    # skip at worst -- never a lost sheet.
+    tagged = []
+    for att in attrs:
+        try:
+            tag = str(_com_retry(lambda: att.TagString, any_error=True))
+        except Exception as e:
+            _log(f"    (could not read an attribute tag, skipping it: {e})")
+            continue
+        tagged.append((att, tag))
+
     upper_map = {k.upper(): v for k, v in attr_map.items() if v is not None}
     # Single Rating cell fills EVERY rating-type attribute the block carries
     # (Rating, FU_Rating, Rating1, DISC_Rating, ... anything whose tag has "RATING").
     rating_val = upper_map.get("RATING")
 
-    _log(f"  _set_attrs: {len(attrs)} attr(s), {len(upper_map)} map key(s)")
-    _log(f"    tags : {[a.TagString for a in attrs]}")
+    _log(f"  _set_attrs: {len(tagged)} attr(s), {len(upper_map)} map key(s)")
+    _log(f"    tags : {[t for _, t in tagged]}")
     _log(f"    keys : {list(upper_map.keys())}")
 
     def _write(att, val):
@@ -1306,32 +1322,32 @@ def _set_attrs(block_ref, attr_map: dict, warnings: list):
         _com_retry(lambda: att.Update())
 
     assigned = 0
-    for att in attrs:
+    for att, tag in tagged:
+        key = tag.upper()
         try:
-            key = att.TagString.upper()
             if key in upper_map:
                 val = str(upper_map[key])
                 if "COLOR" in key or "COLOUR" in key:
                     val = _normalize_color(val)   # GREEN -> GRN safety net
                 _write(att, val)
                 assigned += 1
-                _log(f"    SET  {att.TagString!r} = {val!r}")
+                _log(f"    SET  {tag!r} = {val!r}")
             elif "RATING" in key and rating_val is not None:
                 val = str(rating_val)
                 _write(att, val)
                 assigned += 1
-                _log(f"    SET* {att.TagString!r} = {val!r}  (rating fill-all)")
+                _log(f"    SET* {tag!r} = {val!r}  (rating fill-all)")
             else:
-                _log(f"    SKIP {att.TagString!r}")
+                _log(f"    SKIP {tag!r}")
         except Exception as e:
-            warnings.append(f"Could not set attr '{att.TagString}': {e}")
-            _log(f"    ERR  {att.TagString!r}: {e}")
+            warnings.append(f"Could not set attr '{tag}': {e}")
+            _log(f"    ERR  {tag!r}: {e}")
 
-    _log(f"  assigned={assigned}/{len(attrs)}")
+    _log(f"  assigned={assigned}/{len(tagged)}")
 
     if assigned == 0 and upper_map:
         warnings.append(
-            f"No attrs matched. Tags: {[a.TagString for a in attrs]}. "
+            f"No attrs matched. Tags: {[t for _, t in tagged]}. "
             f"Keys: {list(upper_map.keys())}"
         )
 
