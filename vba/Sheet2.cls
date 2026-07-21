@@ -710,53 +710,74 @@ Private Sub PZ_RebuildRows3To11()
                     dCopy = False
                     If dcol > 0 Then dCopy = dInstO Or PZ_IsBigTB(CStr(Me.Cells(r, dcol).Value))
 
+                    Dim madeCopies As Long, tgtCond As String, anchCond As String
+                    madeCopies = 0
+                    anchCond = Trim$(CStr(Me.Cells(r, "A").Value))
+
                     For i = 1 To copiesNeeded
 
-                        If r + i <= PZ_LAST_ROW Then
+                        If r + i > PZ_LAST_ROW Then Exit For
 
-                            Me.Cells(r + i, PZ_MARKER_COL).Value = PZ_AUTO_MARKER
-
-                            'Shared identity incl. Wire Ct (Conduit / Wire Ct / Type / Wire
-                            'Gauge) so the continuation row's dropdowns actually resolve.
-                            Me.Cells(r + i, "A").Value = Me.Cells(r, "A").Value
-                            Me.Cells(r + i, "B").Value = Me.Cells(r, "B").Value
-                            Me.Cells(r + i, "C").Value = Me.Cells(r, "C").Value
-                            Me.Cells(r + i, "D").Value = Me.Cells(r, "D").Value
-                            'Carry ONLY the instrument-side symbol down; never the user side
-                            'so a manually entered S (or D) symbol on the copy is preserved.
-                            If sCopy Then
-                                Me.Cells(r + i, SSYM).Value = Me.Cells(r, SSYM).Value
-                                If sInstO Then Call PZ_CopyInstrISA(r, r + i, "S")
+                        'PROTECT the row the user is building as their OWN conduit: if the
+                        'continuation target already carries a Conduit tag that isn't this
+                        'anchor's, NEVER stamp the anchor's conduit/symbol over it. A
+                        'continuation has to sit directly under its anchor, so we can't
+                        'leapfrog the user's row -- stop expanding here. Clear only a stale
+                        'auto-marker so the row survives as its own anchor (not wiped as an
+                        'orphan). This is what stops "it put the conduit above over the row I
+                        'was filling out."
+                        tgtCond = Trim$(CStr(Me.Cells(r + i, "A").Value))
+                        If Len(tgtCond) > 0 And StrComp(tgtCond, anchCond, vbTextCompare) <> 0 Then
+                            If CStr(Me.Cells(r + i, PZ_MARKER_COL).Value) = PZ_AUTO_MARKER _
+                               Or CStr(Me.Cells(r + i, PZ_MARKER_COL).Value) = "PZ_AUTO_ANALOG_ROW" Then
+                                Me.Cells(r + i, PZ_MARKER_COL).ClearContents
                             End If
-                            If dCopy And dcol > 0 Then
-                                Me.Cells(r + i, dcol).Value = Me.Cells(r, dcol).Value
-                                If dInstO Then Call PZ_CopyInstrISA(r, r + i, "D")
-                            End If
-
-                            Call PZ_FormatLoopCells(r + i, loopCount)
-                            Call PZ_ApplyPullRopeLogic(r + i)
-                            Call PZ_SetWireLabelFormulas(r + i)
-
-                            'Grey the synced side (instrument or TB strip) on the copy;
-                            'leave the OTHER side editable and ungreyed.
-                            If sCopy Then
-                                With Me.Cells(r + i, SSYM)
-                                    .Interior.Color = RGB(191, 191, 191)
-                                    .Font.Color = RGB(89, 89, 89)
-                                End With
-                            End If
-                            If dCopy And dcol > 0 Then
-                                With Me.Cells(r + i, dcol)
-                                    .Interior.Color = RGB(191, 191, 191)
-                                    .Font.Color = RGB(89, 89, 89)
-                                End With
-                            End If
-
+                            Exit For
                         End If
+
+                        Me.Cells(r + i, PZ_MARKER_COL).Value = PZ_AUTO_MARKER
+
+                        'Shared identity incl. Wire Ct (Conduit / Wire Ct / Type / Wire
+                        'Gauge) so the continuation row's dropdowns actually resolve.
+                        Me.Cells(r + i, "A").Value = Me.Cells(r, "A").Value
+                        Me.Cells(r + i, "B").Value = Me.Cells(r, "B").Value
+                        Me.Cells(r + i, "C").Value = Me.Cells(r, "C").Value
+                        Me.Cells(r + i, "D").Value = Me.Cells(r, "D").Value
+                        'Carry ONLY the instrument-side symbol down; never the user side
+                        'so a manually entered S (or D) symbol on the copy is preserved.
+                        If sCopy Then
+                            Me.Cells(r + i, SSYM).Value = Me.Cells(r, SSYM).Value
+                            If sInstO Then Call PZ_CopyInstrISA(r, r + i, "S")
+                        End If
+                        If dCopy And dcol > 0 Then
+                            Me.Cells(r + i, dcol).Value = Me.Cells(r, dcol).Value
+                            If dInstO Then Call PZ_CopyInstrISA(r, r + i, "D")
+                        End If
+
+                        Call PZ_FormatLoopCells(r + i, loopCount)
+                        Call PZ_ApplyPullRopeLogic(r + i)
+                        Call PZ_SetWireLabelFormulas(r + i)
+
+                        'Grey the synced side (instrument or TB strip) on the copy;
+                        'leave the OTHER side editable and ungreyed.
+                        If sCopy Then
+                            With Me.Cells(r + i, SSYM)
+                                .Interior.Color = RGB(191, 191, 191)
+                                .Font.Color = RGB(89, 89, 89)
+                            End With
+                        End If
+                        If dCopy And dcol > 0 Then
+                            With Me.Cells(r + i, dcol)
+                                .Interior.Color = RGB(191, 191, 191)
+                                .Font.Color = RGB(89, 89, 89)
+                            End With
+                        End If
+
+                        madeCopies = madeCopies + 1
 
                     Next i
 
-                    r = r + copiesNeeded
+                    r = r + madeCopies
 
                 End If
 
@@ -2534,6 +2555,113 @@ Private Sub PZ_SanitizePastedRows(ByVal Target As Range)
     Me.Range("BE" & r & ":BH" & r).ClearContents   'WL1-4 modes -> back to auto
     Next r
 End Sub
+
+'Smart, values-only paste for FillIndex (invoked by the Ctrl+V shim in modUndo).
+'WHY: the Tag columns carry hidden SPACER columns (D Symbol 29 + hidden 30-31; D Tag 1
+'at 32 + hidden 33-34), while the Term columns are contiguous (S Term 1-4 = 18-21). A
+'plain Ctrl+V of the four VISIBLE D-Tag cells actually copies the 6-wide block 32:37
+'(Excel includes hidden cells), so pasting at S Term 1 scatters the values through the
+'gaps AND spills the last two onto S Rating / S Fuse Rating -- the "messed up row". A
+'normal paste also drags the source's fill/borders/validation over the destination.
+'FIX: collapse the hidden rows/cols on BOTH the copied range and the paste destination
+'and move ONLY the values, so the grid the user SEES lands exactly where they aim it.
+'The sheet's own rebuild then repaints all formatting from the data, so nothing visual
+'is lost.
+'RETURNS True when it OWNED the paste (caller must NOT paste again); False when it
+'declined -- so the shim falls back to a normal Excel paste. It DECLINES unless the
+'copied range actually spans hidden rows/cols, which keeps every ordinary paste
+'(single cell, same-shape blocks, paste-to-fill tiling) exactly as native Excel does it
+'and only steps in for the hidden-spacer case that scatters / spills.
+Public Function PZ_SmartValuesPaste(ByVal src As Range, ByVal dstSel As Range) As Boolean
+    PZ_SmartValuesPaste = False
+    On Error GoTo done
+    Dim srcWs As Worksheet
+    Set srcWs = src.Worksheet
+
+    If src.Areas.Count <> 1 Then GoTo done          'multi-area -> let Excel handle/refuse it
+    If src.Cells.CountLarge > 50000 Then GoTo done  'pathological size -> native paste
+
+    'Ordered VISIBLE source rows / cols (this is what collapses the hidden spacers).
+    Dim sRows As Collection, sCols As Collection
+    Set sRows = New Collection: Set sCols = New Collection
+    Dim rr As Long, cc As Long
+    Dim r0 As Long, r1 As Long, c0 As Long, c1 As Long
+    r0 = src.Row: r1 = r0 + src.Rows.Count - 1
+    c0 = src.Column: c1 = c0 + src.Columns.Count - 1
+    For rr = r0 To r1
+        If Not srcWs.Rows(rr).Hidden Then sRows.Add rr
+    Next rr
+    For cc = c0 To c1
+        If Not srcWs.Columns(cc).Hidden Then sCols.Add cc
+    Next cc
+    If sRows.Count = 0 Or sCols.Count = 0 Then GoTo done
+
+    'GATE: engage ONLY when the copy crossed hidden rows/cols. Otherwise decline so the
+    'caller does a normal Excel paste -- preserving tiling, format copy, and every other
+    'native behavior for the cases that were never broken.
+    If sRows.Count = src.Rows.Count And sCols.Count = src.Columns.Count Then GoTo done
+
+    'From here we OWN the paste: set the flag now so an error mid-write can never cause a
+    'second (native) paste on top of a partial one.
+    PZ_SmartValuesPaste = True
+
+    'Snapshot the collapsed values grid (values only -- never formats).
+    Dim vals() As Variant, i As Long, j As Long
+    ReDim vals(1 To sRows.Count, 1 To sCols.Count)
+    For i = 1 To sRows.Count
+        For j = 1 To sCols.Count
+            vals(i, j) = srcWs.Cells(sRows(i), sCols(j)).Value
+        Next j
+    Next i
+
+    'Destination anchor = top-left of the paste selection.
+    Dim dTop As Long, dLeft As Long
+    dTop = dstSel.Cells(1, 1).Row
+    dLeft = dstSel.Cells(1, 1).Column
+    If dTop < 3 Then GoTo done          'never write into the header rows
+
+    'Single value -> plain assignment; let Worksheet_Change take its normal fast path.
+    If sRows.Count = 1 And sCols.Count = 1 Then
+        Me.Cells(dTop, dLeft).Value = vals(1, 1)
+        GoTo done
+    End If
+
+    'Ordered VISIBLE destination rows / cols (skip hidden spacer cols on the paste side
+    'too, so a paste INTO a tag block stays aligned as well).
+    Dim dRows As Collection, dCols As Collection
+    Set dRows = New Collection: Set dCols = New Collection
+    rr = dTop
+    Do While dRows.Count < sRows.Count And rr <= PZ_LAST_ROW
+        If Not Me.Rows(rr).Hidden Then dRows.Add rr
+        rr = rr + 1
+    Loop
+    cc = dLeft
+    Do While dCols.Count < sCols.Count And cc <= 240
+        If Not Me.Columns(cc).Hidden Then dCols.Add cc
+        cc = cc + 1
+    Loop
+    If dRows.Count = 0 Or dCols.Count = 0 Then GoTo done
+
+    'Multi-cell paste: mirror the Worksheet_Change paste flow (record undo, sanitize the
+    'touched rows, rebuild once) with events off so the many writes fire it only once.
+    Application.EnableEvents = False
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+    Call PZ_RecordChange
+    For i = 1 To dRows.Count
+        For j = 1 To dCols.Count
+            Me.Cells(dRows(i), dCols(j)).Value = vals(i, j)
+        Next j
+    Next i
+    Call PZ_SanitizePastedRows(Me.Range("A" & dRows(1) & ":A" & dRows(dRows.Count)))
+    Call PZ_RebuildRows3To11
+    mCommitted = Me.Range(PZ_UNDO_RANGE).Formula
+
+done:
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+End Function
 
 'A row holds no loop data (cleared/deleted): no conduit, no wire count, no symbol.
 Private Function PZ_RowIsEmpty(ByVal r As Long) As Boolean
