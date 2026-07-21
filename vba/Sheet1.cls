@@ -433,8 +433,13 @@ Private Sub CI_HandleRefDocChange(ByVal Target As Range)
     End If
 
     If ValueExistsInMainList(newVal) = False Then
-        Target.Value = oldVal
-        BuildDropdownDisplayList oldVal
+        'Free text -- typed or pasted a value that isn't one of the pick-list docs.
+        'Keep it verbatim instead of reverting (the old behavior blocked all typing /
+        'single-cell paste into this column). The dropdown still works for picking known
+        'docs; this just also lets you type/paste an arbitrary ref-doc name.
+        mPreviousCellAddress = Target.Address(False, False)
+        mPreviousCellValue = CStr(Target.Value)
+        BuildDropdownDisplayList CStr(Target.Value)
         ApplyDropdownValidation
         GoTo SafeExit
     End If
