@@ -370,6 +370,14 @@ Private Sub Worksheet_SelectionChange(ByVal Target As Range)
 
     If Target.CountLarge > 1 Then Exit Sub
 
+    'A pending clipboard copy/cut (Ctrl+C, marching ants) is silently cancelled by ANY
+    'cell write. The dropdown rebuild below writes the display-list cells and re-applies
+    'validation, so if the user copies a cell then CLICKS a Ref Documents cell to paste
+    'into, this would wipe their clipboard and the next Ctrl+V would paste nothing. While
+    'a copy/cut is pending, skip the rebuild (the cell keeps its current dropdown) so
+    'paste works normally.
+    If Application.CutCopyMode <> False Then Exit Sub
+
     If Not Intersect(Target, Me.Range(DROPDOWN_RANGE)) Is Nothing Then
         mPreviousCellAddress = Target.Address(False, False)
         mPreviousCellValue = CleanSelectedText(CStr(Target.Value))
