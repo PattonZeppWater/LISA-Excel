@@ -303,19 +303,27 @@ def _wait_quiescent(app, timeout=15.0):
     return False
 
 
+_SHEET_RETRIES = 3   # whole-sheet attempts before giving up
+
+
 def generate_dwg(*args, **kwargs) -> dict:
     """Thread-safe wrapper: serialize AutoCAD access across concurrent requests. Retries
-    the whole sheet if it fails with a transient 'AutoCAD busy' COM error (a rapid
-    Generate All can otherwise drop a random sheet with 'Call was rejected by callee')."""
+    the whole sheet if it fails, since almost every generation failure during a rapid
+    Generate All is a transient 'AutoCAD busy' COM error and a fresh re-render (from a
+    clean template copy, after waiting for AutoCAD to go idle) succeeds. Each attempt is
+    fully idempotent -- it re-copies the template and overwrites the output -- so a retry
+    can't leave a half-drawn sheet. A genuinely broken conduit still fails all attempts
+    and returns its error, so nothing is masked; it just isn't randomly skipped."""
     with _GEN_LOCK:
         r = None
-        for attempt in range(3):
+        for attempt in range(_SHEET_RETRIES):
             r = _generate_dwg_impl(*args, **kwargs)
-            if r.get("success") or not _is_busy_error(r.get("error") or ""):
+            if r.get("success"):
                 return r
-            _log(f"generate_dwg: transient busy error, retrying whole sheet "
-                 f"(attempt {attempt + 2}/3)")
-            time.sleep(1.5)
+            if attempt < _SHEET_RETRIES - 1:
+                _log(f"generate_dwg: sheet failed ({r.get('error')!r}); re-rendering the "
+                     f"whole sheet (attempt {attempt + 2}/{_SHEET_RETRIES})")
+                time.sleep(2.0)
         return r
 
 
@@ -946,7 +954,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
 
         # ── 9. Save ───────────────────────────────────────────────────────────
         _log("Calling SaveAs...")
-        doc.SaveAs(output_path)
+        _com_retry(lambda: doc.SaveAs(output_path))   # retry a transient busy rejection
 
         if not os.path.exists(output_path):
             return _err(f"SaveAs completed but file not found at: {output_path}")
@@ -1004,16 +1012,16 @@ def _clear_model_space(model, warnings: list):
     the template's leftover one.
     """
     try:
-        count = model.Count
-        entities = [model.Item(i) for i in range(count)]
+        count = _com_retry(lambda: model.Count)
+        entities = [_com_retry(lambda: model.Item(i)) for i in range(count)]
         deleted = preserved = skipped = 0
         for e in entities:
             try:
                 obj_name   = ""
                 layer_name = ""
                 try:
-                    obj_name   = str(e.ObjectName)
-                    layer_name = str(e.Layer).upper()
+                    obj_name   = str(_com_retry(lambda: e.ObjectName))
+                    layer_name = str(_com_retry(lambda: e.Layer)).upper()
                 except Exception:
                     pass
 
@@ -1027,7 +1035,7 @@ def _clear_model_space(model, warnings: list):
                         except Exception:
                             bname = ""
                     if bname.upper() == CONDUIT_NAME.upper():
-                        e.Delete()
+                        _com_retry(lambda: e.Delete())
                         deleted += 1
                     else:
                         preserved += 1
@@ -1041,7 +1049,7 @@ def _clear_model_space(model, warnings: list):
                     preserved += 1
                     continue
 
-                e.Delete()
+                _com_retry(lambda: e.Delete())
                 deleted += 1
             except Exception:
                 skipped += 1
@@ -1139,40 +1147,49 @@ def _insert_block(model, x: float, y: float, block_name: str, warnings: list):
     """
     insertion_pt = _pt(x, y)
 
-    try:
-        count_before = model.Count
-    except Exception:
-        count_before = -1
-
+    # Insert, retrying a transient "AutoCAD busy" rejection. We can't just wrap InsertBlock
+    # in _com_retry blindly: the AE COM marshaller sometimes RAISES even though the insert
+    # actually succeeded (count went up). So on each raise we check the count -- if it grew,
+    # the block WAS placed (recover it, don't retry, or we'd double-insert); if it didn't
+    # grow and the error is a transient busy rejection, wait and retry so the block isn't
+    # silently skipped (which used to leave a "successful" sheet missing symbols).
     ref = None
-    try:
-        ref = model.InsertBlock(insertion_pt, block_name, 1.0, 1.0, 1.0, 0.0)
-        _log(f"_insert_block '{block_name}' at ({x},{y}) — normal return")
-    except Exception as e:
-        _log(f"_insert_block '{block_name}' — COM return raised: {e}")
+    last_err = None
+    for attempt in range(8):
         try:
-            count_after = model.Count
+            count_before = model.Count
+        except Exception:
+            count_before = -1
+        try:
+            ref = model.InsertBlock(insertion_pt, block_name, 1.0, 1.0, 1.0, 0.0)
+            _log(f"_insert_block '{block_name}' at ({x},{y}) — normal return")
+            break
+        except Exception as e:
+            last_err = e
+            _log(f"_insert_block '{block_name}' — COM return raised: {e}")
+            try:
+                count_after = model.Count
+            except Exception:
+                count_after = count_before
             if count_after > count_before:
-                ref = model.Item(count_after - 1)
+                ref = model.Item(count_after - 1)   # succeeded despite the raise
                 _log(f"_insert_block '{block_name}' — recovered via model[-1]")
-            else:
-                warnings.append(
-                    f"Couldn't place the '{block_name}' symbol on the drawing. This usually "
-                    f"means that block isn't in the current template's block library "
-                    f"(check the symbol name in the workbook matches a block in the template), "
-                    f"or AutoCAD was busy. Technical detail: {e}")
-                return None
-        except Exception as e2:
-            warnings.append(
-                f"Couldn't place the '{block_name}' symbol and AutoCAD didn't respond. Make "
-                f"sure AutoCAD is open and idle (no command or dialog active), then try again. "
-                f"Technical detail: {e} / {e2}")
-            return None
+                break
+            if _is_busy_error(e) and attempt < 7:
+                time.sleep(0.5)   # AutoCAD busy -- wait and retry the insert
+                continue
+            break
 
     if ref is None:
-        warnings.append(
-            f"Couldn't place the '{block_name}' symbol (AutoCAD returned nothing). Verify that "
-            f"block exists in the template's block library and try again.")
+        if _is_busy_error(last_err):
+            warnings.append(
+                f"Couldn't place the '{block_name}' symbol -- AutoCAD stayed busy through "
+                f"several retries. Technical detail: {last_err}")
+        else:
+            warnings.append(
+                f"Couldn't place the '{block_name}' symbol. This usually means that block "
+                f"isn't in the current template's block library (check the symbol name in the "
+                f"workbook matches a block in the template). Technical detail: {last_err}")
         return None
 
     try:
