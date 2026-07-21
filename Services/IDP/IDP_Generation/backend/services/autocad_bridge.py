@@ -242,10 +242,75 @@ def _acad_busy_hint(msg: str) -> str:
     )
 
 
+# COM HRESULTs AutoCAD raises when it's momentarily busy -- mid-command, redrawing, or
+# still finishing the previous drawing during a rapid Generate All. These are transient:
+# the correct response is to wait a beat and retry, not to fail the sheet.
+#   -2147418111 = RPC_E_CALL_REJECTED   ("Call was rejected by callee.")
+#   -2147417846 = RPC_E_SERVERCALL_RETRYLATER
+_COM_BUSY_HRESULTS = (-2147418111, -2147417846)
+
+
+def _is_busy_error(e) -> bool:
+    """True if e is a transient 'AutoCAD is busy' COM error (worth retrying). Accepts an
+    exception or an already-stringified error message."""
+    try:
+        if isinstance(e, BaseException) and getattr(e, "args", None):
+            if e.args[0] in _COM_BUSY_HRESULTS:
+                return True
+    except Exception:
+        pass
+    s = str(e).lower()
+    return ("rejected by callee" in s or "retrylater" in s
+            or "server is busy" in s or "call was rejected" in s)
+
+
+def _com_retry(fn, tries=8, delay=0.4):
+    """Run fn(); if it raises a transient 'AutoCAD busy' COM error, wait and retry up to
+    `tries` times. Re-raises the last busy error if none succeed; any non-busy error is
+    raised immediately (not retried)."""
+    last = None
+    for _ in range(tries):
+        try:
+            return fn()
+        except Exception as e:
+            if not _is_busy_error(e):
+                raise
+            last = e
+            time.sleep(delay)
+    if last is not None:
+        raise last
+
+
+def _wait_quiescent(app, timeout=15.0):
+    """Poll until AutoCAD reports it's idle, or timeout. Best-effort -- never raises.
+    Called before each sheet so a rapid Generate All doesn't start hammering AutoCAD
+    while it's still finishing the previous drawing (the main source of 'Call was
+    rejected by callee')."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            if app.GetAcadState().IsQuiescent:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.3)
+    return False
+
+
 def generate_dwg(*args, **kwargs) -> dict:
-    """Thread-safe wrapper: serialize AutoCAD access across concurrent requests."""
+    """Thread-safe wrapper: serialize AutoCAD access across concurrent requests. Retries
+    the whole sheet if it fails with a transient 'AutoCAD busy' COM error (a rapid
+    Generate All can otherwise drop a random sheet with 'Call was rejected by callee')."""
     with _GEN_LOCK:
-        return _generate_dwg_impl(*args, **kwargs)
+        r = None
+        for attempt in range(3):
+            r = _generate_dwg_impl(*args, **kwargs)
+            if r.get("success") or not _is_busy_error(r.get("error") or ""):
+                return r
+            _log(f"generate_dwg: transient busy error, retrying whole sheet "
+                 f"(attempt {attempt + 2}/3)")
+            time.sleep(1.5)
+        return r
 
 
 def _is_bigtb(nm) -> bool:
@@ -798,6 +863,12 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
         return _err(_acad_busy_hint(f"AutoCAD not running or not accessible: {_conn_err}"))
     _log(f"  AutoCAD version: {acad_app.Version}")
 
+    # Wait for AutoCAD to go idle before we start hammering it. On a rapid Generate All
+    # it's often still finishing the previous sheet; starting now is what most often
+    # triggers "Call was rejected by callee" mid-render. Best-effort (proceeds after the
+    # timeout regardless; the retries below are the backstop).
+    _wait_quiescent(acad_app)
+
     # ── 2. Close any previously open document at the target path ─────────────
     _close_if_open(acad_app, output_path)
 
@@ -1200,7 +1271,7 @@ def _normalize_color(value):
 def _set_attrs(block_ref, attr_map: dict, warnings: list):
     """Set block attributes from attr_map (case-insensitive tag matching)."""
     try:
-        attrs = block_ref.GetAttributes()
+        attrs = _com_retry(lambda: block_ref.GetAttributes())
     except Exception as e:
         warnings.append(f"GetAttributes() failed: {e}")
         _log(f"  GetAttributes() failed: {e}")
@@ -1220,6 +1291,12 @@ def _set_attrs(block_ref, attr_map: dict, warnings: list):
     _log(f"    tags : {[a.TagString for a in attrs]}")
     _log(f"    keys : {list(upper_map.keys())}")
 
+    def _write(att, val):
+        # Retry the actual COM writes -- these are the calls that intermittently hit
+        # "Call was rejected by callee" during a busy Generate All.
+        _com_retry(lambda: setattr(att, "TextString", val))
+        _com_retry(lambda: att.Update())
+
     assigned = 0
     for att in attrs:
         try:
@@ -1228,14 +1305,12 @@ def _set_attrs(block_ref, attr_map: dict, warnings: list):
                 val = str(upper_map[key])
                 if "COLOR" in key or "COLOUR" in key:
                     val = _normalize_color(val)   # GREEN -> GRN safety net
-                att.TextString = val
-                att.Update()
+                _write(att, val)
                 assigned += 1
                 _log(f"    SET  {att.TagString!r} = {val!r}")
             elif "RATING" in key and rating_val is not None:
                 val = str(rating_val)
-                att.TextString = val
-                att.Update()
+                _write(att, val)
                 assigned += 1
                 _log(f"    SET* {att.TagString!r} = {val!r}  (rating fill-all)")
             else:
