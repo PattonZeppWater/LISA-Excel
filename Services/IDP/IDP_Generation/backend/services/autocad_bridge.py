@@ -264,16 +264,22 @@ def _is_busy_error(e) -> bool:
             or "server is busy" in s or "call was rejected" in s)
 
 
-def _com_retry(fn, tries=8, delay=0.4):
+def _com_retry(fn, tries=8, delay=0.4, any_error=False):
     """Run fn(); if it raises a transient 'AutoCAD busy' COM error, wait and retry up to
-    `tries` times. Re-raises the last busy error if none succeed; any non-busy error is
-    raised immediately (not retried)."""
+    `tries` times. Re-raises the last error if none succeed; a non-busy error is raised
+    immediately (not retried).
+
+    any_error=True also retries NON-busy exceptions -- for idempotent, non-critical COM
+    calls (e.g. AcadTable.SetText) that, during a busy Generate All, can fail with a
+    transient dynamic-dispatch error ('Item.SetText') that isn't a classic busy HRESULT.
+    A genuinely persistent failure still exhausts the retries and re-raises, so nothing
+    is masked -- it just becomes resilient to transient hiccups."""
     last = None
     for _ in range(tries):
         try:
             return fn()
         except Exception as e:
-            if not _is_busy_error(e):
+            if not any_error and not _is_busy_error(e):
                 raise
             last = e
             time.sleep(delay)
@@ -1278,8 +1284,10 @@ def _set_attrs(block_ref, attr_map: dict, warnings: list):
         return
 
     if not attrs:
-        warnings.append("Block has no variable attributes")
-        _log("  GetAttributes() returned empty")
+        # Not an error: some symbol blocks (simple connectors, etc.) simply have no
+        # fill-in attributes, so there's nothing to set. Log it for debugging but don't
+        # surface it as a user-facing warning -- it's just noise in the generation log.
+        _log("  GetAttributes() returned empty (block has no attributes -- nothing to set)")
         return
 
     upper_map = {k.upper(): v for k, v in attr_map.items() if v is not None}
@@ -1867,14 +1875,15 @@ def _fill_ref_docs_table(model, ref_doc_rows: list, dev_rows: list, warnings: li
             break
         try:
             if rd.get("dwg_num") is not None and _REF_COL_DWG < table_cols:
-                table.SetText(row_idx, _REF_COL_DWG, str(rd["dwg_num"]))
+                _com_retry(lambda: table.SetText(row_idx, _REF_COL_DWG, str(rd["dwg_num"])), any_error=True)
             if rd.get("description") is not None and _REF_COL_DESC < table_cols:
-                table.SetText(row_idx, _REF_COL_DESC, str(rd["description"]))
+                _com_retry(lambda: table.SetText(row_idx, _REF_COL_DESC, str(rd["description"])), any_error=True)
             if rd.get("manufacturer") is not None and _REF_COL_MFR < table_cols:
-                table.SetText(row_idx, _REF_COL_MFR, str(rd["manufacturer"]))
+                _com_retry(lambda: table.SetText(row_idx, _REF_COL_MFR, str(rd["manufacturer"])), any_error=True)
             written += 1
         except Exception as ex:
-            warnings.append(f"Ref docs: could not write row {i} to table: {ex}")
+            warnings.append(f"Ref docs: could not write supporting-document row {i + 1} to the "
+                            f"table (AutoCAD kept rejecting the write). Detail: {ex}")
 
     _log(f"_fill_ref_docs_table: wrote {written} ref doc row(s)")
 
@@ -1897,10 +1906,11 @@ def _fill_ref_docs_table(model, ref_doc_rows: list, dev_rows: list, warnings: li
             # catalog deviation number the conduit selected. The selection only decides
             # which notes appear (and their order); the drawing renumbers them 1,2,3,…
             if _DEV_COL_NUM < table_cols:
-                table.SetText(row_idx, _DEV_COL_NUM, str(i + 1))
+                _com_retry(lambda: table.SetText(row_idx, _DEV_COL_NUM, str(i + 1)), any_error=True)
             if _DEV_COL_TEXT < table_cols and note is not None:
-                table.SetText(row_idx, _DEV_COL_TEXT, str(note))
+                _com_retry(lambda: table.SetText(row_idx, _DEV_COL_TEXT, str(note)), any_error=True)
             dwritten += 1
         except Exception as ex:
-            warnings.append(f"Deviations: could not write note {i}: {ex}")
+            warnings.append(f"Deviations: could not write note {i + 1} to the table "
+                            f"(AutoCAD kept rejecting the write). Detail: {ex}")
     _log(f"_fill_ref_docs_table: wrote {dwritten} deviation note(s)")
