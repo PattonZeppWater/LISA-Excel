@@ -424,9 +424,8 @@ Private Sub Worksheet_Change(ByVal Target As Range)
         End If
     End If
 
-    'Per-term hide toggle is now a RIGHT-CLICK (Worksheet_BeforeRightClick), not a typed /
-    'picked value -- see that handler. (The old dropdown's single-item list let Excel 365
-    'auto-complete a typed letter like f/g/h straight into "Hide from Generation".)
+    'The per-term "Hide from Generation" toggle has been removed entirely (it used to be a
+    'right-click on a Term/Tag cell); there is no typed, picked, or right-click hide path now.
 
     'FAST PATH: single-cell edit in a NON-structural column (not Symbol/Wire Ct/Type)
     'changes no formatting/grouping; wire labels are auto-updating formulas -> skip the
@@ -519,51 +518,10 @@ Private Sub Worksheet_SelectionChange(ByVal Target As Range)
 End Sub
 
 
-'Right-click a Term or Tag cell to toggle its "Hide from Generation" flag (matches the
-'header hover-notes: "Right-click ... for the toggle"). This replaced the single-item
-'dropdown, whose validation list let Excel 365 auto-complete typed letters (f/g/h all
-'appear in "Hide from Generation") into the hide option. Term/Tag cells are now free text.
-Private Sub Worksheet_BeforeRightClick(ByVal Target As Range, Cancel As Boolean)
-    On Error GoTo done
-    If Target Is Nothing Then Exit Sub
-    If Target.CountLarge <> 1 Then Exit Sub
-    If Target.Row < 3 Or Target.Row > PZ_LAST_ROW Then Exit Sub
-    Dim tok As String
-    tok = PZ_TermToken(Target.Column)
-    If Len(tok) = 0 Then Exit Sub
-    'Only an OPEN cell (white/fillable, or amber/already-hidden) can be toggled; a greyed
-    '"not applicable" cell keeps its normal right-click menu.
-    If Not PZ_CellIsOpen(Target) Then Exit Sub
-    Cancel = True
-    Application.EnableEvents = False
-    Call PZ_ToggleTermHide(Target, tok)
-done:
-    Application.EnableEvents = True   'always re-enable, even if the toggle errored
-End Sub
-
-'A term/tag cell is "open" when white (fillable) or amber (already flagged hidden); a
-'greyed "not applicable" cell is closed.
-Private Function PZ_CellIsOpen(ByVal c As Range) As Boolean
-    On Error Resume Next
-    If c.Interior.Pattern = xlNone Then PZ_CellIsOpen = True: Exit Function
-    If c.Interior.Color = RGB(255, 235, 156) Then PZ_CellIsOpen = True
-End Function
-
-'Flip a term/tag's hidden state: keep its real value, flip the CSV token, repaint. The
-'value is never overwritten (unlike the old dropdown), so no undo/restore dance is needed.
-Private Sub PZ_ToggleTermHide(ByVal c As Range, ByVal tok As String)
-    Dim hcell As Range, csv As String, nowHidden As Boolean
-    Set hcell = Me.Cells(c.Row, PZ_HIDDENTERMS_COL)
-    csv = CStr(hcell.Value)
-    If PZ_CsvHas(csv, tok) Then
-        hcell.Value = PZ_CsvRemove(csv, tok)
-        nowHidden = False
-    Else
-        hcell.Value = PZ_CsvAdd(csv, tok)
-        nowHidden = True
-    End If
-    Call PZ_ApplyTermHideVisual(c, nowHidden)
-End Sub
+'The per-term "Hide from Generation" right-click toggle was removed: right-clicking a
+'Term or Tag cell now shows Excel's normal context menu (so right-click Copy/Paste works
+'as expected). There is no Worksheet_BeforeRightClick handler anymore. Any term/tag flags
+'already stored in a workbook keep rendering, but new ones can no longer be toggled here.
 
 
 'Push the pre-change committed state onto the undo stack; a fresh edit clears redo.
@@ -973,8 +931,8 @@ Private Sub PZ_EnsureValidations(ByVal lastRow As Long)
     Next n3
     'Term / Tag / Rating cells are FREE TEXT. Clear any leftover "Hide from Generation" list
     'validation from older workbooks -- its single-item list let Excel 365 auto-complete a
-    'typed letter (f/g/h all occur in the phrase) into the hide option. The hide toggle is
-    'now a right-click (Worksheet_BeforeRightClick).
+    'typed letter (f/g/h all occur in the phrase) into the hide option. The per-term hide
+    'feature has since been removed entirely, so no hide validation is ever re-added.
     For Each vc In Array("S Tag1", "S Tag2", "S Tag3", "S Tag4", "D Tag1", "D Tag2", "D Tag3", "D Tag4", _
                          "S Term1", "S Term2", "S Term3", "S Term4", "D Term1", "D Term2", "D Term3", "D Term4", _
                          "S Rating", "D Rating")
@@ -2803,6 +2761,17 @@ Private Sub PZ_FitWireLabels()
     'measured and the column never widened -- the "sometimes it doesn't lengthen" case.
     ldr = PZ_LastDataRow()
     If ldr > lastR Then lastR = ldr
+    'A wire label -- Wire Label 4 most of all -- can carry a value on an auto-generated
+    'continuation row whose A/B/Symbol cells are blank. PZ_LastDataRow keys off A/B/Symbol,
+    'so it misses those rows: their (long) label was never measured and the column never
+    'widened. Wire Label 4 is usually blank on the primary row, so the continuation row is
+    'its ONLY content -- which is exactly why col 4 was the one that visibly never widened.
+    'Extend the measure extent to the last row that actually holds wire-label text/formula.
+    Dim wlc As Long, wlLast As Long
+    For wlc = 53 To 56
+        wlLast = Me.Cells(PZ_LAST_ROW, wlc).End(xlUp).Row
+        If wlLast > lastR Then lastR = wlLast
+    Next wlc
     If lastR < 3 Or lastR > PZ_LAST_ROW Then lastR = PZ_LAST_ROW
     On Error Resume Next
     'Full recalc so the wire-label formulas AND every cell they reference are current
