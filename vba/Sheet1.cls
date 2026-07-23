@@ -359,6 +359,13 @@ End Sub
 
 Private Sub Worksheet_SelectionChange(ByVal Target As Range)
 
+    'Keep the custom Ctrl+Z / Ctrl+Y bindings live (see modUndo.PZ_BindKeys). Excel can
+    'drop OnKey mid-sheet, after which Ctrl+Z silently reverts to native undo; re-asserting
+    'here (fires as the user navigates) makes the binding self-healing.
+    On Error Resume Next
+    modUndo.PZ_BindKeys
+    On Error GoTo 0
+
     'One-time: capture the initial committed state so the first edit is undoable.
     If IsEmpty(mCommitted) Then
         On Error Resume Next

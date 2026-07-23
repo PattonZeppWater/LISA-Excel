@@ -12,9 +12,14 @@ Private gBound As Boolean
 'shim interfered with normal Ctrl+V; a native paste on FillIndex is cleaned up afterwards by
 'Worksheet_Change -> PZ_SanitizePastedRows, so nothing is lost by letting Excel handle it.)
 
+'Re-assert the key bindings EVERY call -- do NOT short-circuit on a "already bound" flag.
+'Excel silently drops OnKey assignments in a lot of situations (after certain dialogs, an
+'add-in, a focus change, or a VBA state reset). If we trusted a sticky gBound flag we would
+'skip re-binding and Ctrl+Z would quietly fall through to Excel's NATIVE undo -- which, after
+'the macro rebuilds, either does nothing or reverts a huge batch at once. Re-asserting is a
+'cheap, idempotent app setting, so we just do it whenever the undo sheet is (re)entered.
 Public Sub PZ_BindKeys()
     On Error Resume Next
-    If gBound Then Exit Sub
     Application.OnKey "^z", "PZ_KeyUndo"
     Application.OnKey "^y", "PZ_KeyRedo"
     Application.OnKey "^+z", "PZ_KeyRedo"   'Ctrl+Shift+Z = redo too
@@ -23,6 +28,7 @@ End Sub
 
 Public Sub PZ_UnbindKeys()
     On Error Resume Next
+    If Not gBound Then Exit Sub
     Application.OnKey "^z"      'no proc arg -> restore Excel default
     Application.OnKey "^y"
     Application.OnKey "^+z"
