@@ -49,7 +49,7 @@ End Sub
 Private Sub PZ_SyncUndoKeys(ByVal Sh As Object)
     On Error Resume Next
     Select Case Sh.CodeName
-        Case "Sheet1", "Sheet2"      'ConduitIndex / FillIndex
+        Case "Sheet1", "Sheet2", "Sheet8", "Sheet10"   'ConduitIndex / FillIndex / Ref Docs / Project Description
             modUndo.PZ_BindKeys
         Case Else
             modUndo.PZ_UnbindKeys

@@ -15,6 +15,14 @@ Option Explicit
 Private Const PD_FIRST_DATA As Long = 3
 Private Const PD_LAST_ROW As Long = 100
 
+'Multi-level Ctrl+Z / Ctrl+Y (mirrors ConduitIndex). Snapshot the data area and drive our
+'own stacks so the sheet's own Change handling doesn't leave undo dead.
+Private Const PD_UNDO_RANGE As String = "A3:H100"
+Private Const PD_UNDO_MAX As Long = 50
+Private mCommitted As Variant
+Private mUndo As Collection
+Private mRedo As Collection
+
 Public Sub PD_EnsureHeaders()
     On Error Resume Next
     If Len(Trim$(CStr(Me.Cells(1, 1).Value))) > 0 _
@@ -64,13 +72,30 @@ Public Sub PD_EnsureTextFormat()
     Next c
 End Sub
 
+Private Sub Worksheet_SelectionChange(ByVal Target As Range)
+    'Keep the custom Ctrl+Z / Ctrl+Y bindings live (see modUndo.PZ_BindKeys) and capture the
+    'initial committed state so the first edit is undoable.
+    On Error Resume Next
+    modUndo.PZ_BindKeys
+    If IsEmpty(mCommitted) Then mCommitted = Me.Range(PD_UNDO_RANGE).Formula
+    On Error GoTo 0
+End Sub
+
 Private Sub Worksheet_Change(ByVal Target As Range)
     On Error GoTo SafeExit
     Call PD_EnsureHeaders
-    If Not Intersect(Target, Me.Range("A" & PD_FIRST_DATA & ":H" & PD_LAST_ROW)) Is Nothing Then
+    Dim inData As Boolean
+    inData = Not (Intersect(Target, Me.Range(PD_UNDO_RANGE)) Is Nothing)
+    'Record the pre-change state on the undo stack (data-area edits only).
+    If inData Then Call PD_RecordChange
+    If inData Then
         Application.EnableEvents = False
         Call PD_EnsureTextFormat
         Application.EnableEvents = True
+        'Snapshot the committed state for the next undo.
+        On Error Resume Next
+        mCommitted = Me.Range(PD_UNDO_RANGE).Formula
+        On Error GoTo 0
     End If
 SafeExit:
     Application.EnableEvents = True
@@ -78,8 +103,65 @@ End Sub
 
 Private Sub Worksheet_Activate()
     On Error Resume Next
+    modUndo.PZ_BindKeys
     Call PD_EnsureHeaders
     Call PD_EnsureTextFormat
+End Sub
+
+
+'================= Multi-level undo / redo (mirrors ConduitIndex) =================
+
+Private Sub PD_RecordChange()
+    On Error Resume Next
+    If mUndo Is Nothing Then Set mUndo = New Collection
+    If mRedo Is Nothing Then Set mRedo = New Collection
+    If Not IsEmpty(mCommitted) Then
+        mUndo.Add mCommitted
+        Do While mUndo.Count > PD_UNDO_MAX
+            mUndo.Remove 1
+        Loop
+        Set mRedo = New Collection
+    End If
+    On Error GoTo 0
+End Sub
+
+'Ctrl+Z on Project Description. Public so the modUndo key shim can reach it.
+Public Sub PD_DoUndo()
+    On Error Resume Next
+    If mUndo Is Nothing Then Exit Sub
+    If mUndo.Count = 0 Then Exit Sub
+    If mRedo Is Nothing Then Set mRedo = New Collection
+    Dim snap As Variant
+    snap = mUndo(mUndo.Count)
+    mUndo.Remove mUndo.Count
+    If Not IsEmpty(mCommitted) Then mRedo.Add mCommitted
+    Call PD_RestoreSnapshot(snap)
+End Sub
+
+'Ctrl+Y on Project Description.
+Public Sub PD_DoRedo()
+    On Error Resume Next
+    If mRedo Is Nothing Then Exit Sub
+    If mRedo.Count = 0 Then Exit Sub
+    If mUndo Is Nothing Then Set mUndo = New Collection
+    Dim snap As Variant
+    snap = mRedo(mRedo.Count)
+    mRedo.Remove mRedo.Count
+    If Not IsEmpty(mCommitted) Then mUndo.Add mCommitted
+    Call PD_RestoreSnapshot(snap)
+End Sub
+
+Private Sub PD_RestoreSnapshot(ByVal snap As Variant)
+    If IsEmpty(snap) Then Exit Sub
+    On Error GoTo done
+    Application.EnableEvents = False
+    Application.ScreenUpdating = False
+    Me.Range(PD_UNDO_RANGE).Formula = snap
+    Call PD_EnsureTextFormat
+    mCommitted = Me.Range(PD_UNDO_RANGE).Formula
+done:
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
 End Sub
 
 

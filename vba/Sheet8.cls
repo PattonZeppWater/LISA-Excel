@@ -18,6 +18,14 @@ Private Const RD_HEADER_ROW As Long = 2
 Private Const RD_FIRST_DATA As Long = 3
 Private Const RD_LAST_ROW As Long = 100
 
+'Multi-level Ctrl+Z / Ctrl+Y (mirrors ConduitIndex). The Worksheet_Change refresh wipes
+'Excel's native undo, so we snapshot the data area and drive our own stacks.
+Private Const RD_UNDO_RANGE As String = "A3:H100"
+Private Const RD_UNDO_MAX As Long = 50
+Private mCommitted As Variant     'state as of the last completed refresh
+Private mUndo As Collection       'undo stack (older states, oldest first)
+Private mRedo As Collection       'redo stack
+
 Public Sub RD_EnsureHeaders()
     On Error Resume Next
     'Restore if EITHER the row-1 title bands OR the row-2 labels have been cleared. Row 1 used
@@ -99,13 +107,30 @@ Public Sub RD_RefreshRows()
     On Error GoTo 0
 End Sub
 
+Private Sub Worksheet_SelectionChange(ByVal Target As Range)
+    'Keep the custom Ctrl+Z / Ctrl+Y bindings live (see modUndo.PZ_BindKeys) and capture the
+    'initial committed state so the first edit is undoable.
+    On Error Resume Next
+    modUndo.PZ_BindKeys
+    If IsEmpty(mCommitted) Then mCommitted = Me.Range(RD_UNDO_RANGE).Formula
+    On Error GoTo 0
+End Sub
+
 Private Sub Worksheet_Change(ByVal Target As Range)
     On Error GoTo SafeExit
     Call RD_EnsureHeaders
-    If Not Intersect(Target, Me.Range("A" & RD_FIRST_DATA & ":H" & RD_LAST_ROW)) Is Nothing Then
+    Dim inData As Boolean
+    inData = Not (Intersect(Target, Me.Range(RD_UNDO_RANGE)) Is Nothing)
+    'Record the pre-change state on the undo stack (data-area edits only).
+    If inData Then Call RD_RecordChange
+    If inData Then
         Application.EnableEvents = False
         Call RD_RefreshRows
         Application.EnableEvents = True
+        'Snapshot the committed state for the next undo.
+        On Error Resume Next
+        mCommitted = Me.Range(RD_UNDO_RANGE).Formula
+        On Error GoTo 0
     End If
 SafeExit:
     Application.EnableEvents = True
@@ -113,8 +138,65 @@ End Sub
 
 Private Sub Worksheet_Activate()
     On Error Resume Next
+    modUndo.PZ_BindKeys
     Call RD_EnsureHeaders
     Call RD_RefreshRows
+End Sub
+
+
+'================= Multi-level undo / redo (mirrors ConduitIndex) =================
+
+Private Sub RD_RecordChange()
+    On Error Resume Next
+    If mUndo Is Nothing Then Set mUndo = New Collection
+    If mRedo Is Nothing Then Set mRedo = New Collection
+    If Not IsEmpty(mCommitted) Then
+        mUndo.Add mCommitted
+        Do While mUndo.Count > RD_UNDO_MAX
+            mUndo.Remove 1
+        Loop
+        Set mRedo = New Collection
+    End If
+    On Error GoTo 0
+End Sub
+
+'Ctrl+Z on Ref Documents & Deviations. Public so the modUndo key shim can reach it.
+Public Sub RD_DoUndo()
+    On Error Resume Next
+    If mUndo Is Nothing Then Exit Sub
+    If mUndo.Count = 0 Then Exit Sub
+    If mRedo Is Nothing Then Set mRedo = New Collection
+    Dim snap As Variant
+    snap = mUndo(mUndo.Count)
+    mUndo.Remove mUndo.Count
+    If Not IsEmpty(mCommitted) Then mRedo.Add mCommitted
+    Call RD_RestoreSnapshot(snap)
+End Sub
+
+'Ctrl+Y on Ref Documents & Deviations.
+Public Sub RD_DoRedo()
+    On Error Resume Next
+    If mRedo Is Nothing Then Exit Sub
+    If mRedo.Count = 0 Then Exit Sub
+    If mUndo Is Nothing Then Set mUndo = New Collection
+    Dim snap As Variant
+    snap = mRedo(mRedo.Count)
+    mRedo.Remove mRedo.Count
+    If Not IsEmpty(mCommitted) Then mUndo.Add mCommitted
+    Call RD_RestoreSnapshot(snap)
+End Sub
+
+Private Sub RD_RestoreSnapshot(ByVal snap As Variant)
+    If IsEmpty(snap) Then Exit Sub
+    On Error GoTo done
+    Application.EnableEvents = False
+    Application.ScreenUpdating = False
+    Me.Range(RD_UNDO_RANGE).Formula = snap
+    Call RD_RefreshRows
+    mCommitted = Me.Range(RD_UNDO_RANGE).Formula
+done:
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
 End Sub
 
 

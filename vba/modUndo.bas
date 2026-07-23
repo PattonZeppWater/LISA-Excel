@@ -40,6 +40,8 @@ Public Sub PZ_KeyUndo()
     Select Case ActiveSheet.CodeName
         Case "Sheet2": Sheet2.PZ_DoUndo      'FillIndex
         Case "Sheet1": Sheet1.CI_DoUndo      'ConduitIndex
+        Case "Sheet8": Sheet8.RD_DoUndo      'Ref Documents & Deviations
+        Case "Sheet10": Sheet10.PD_DoUndo    'Project Description
     End Select
 End Sub
 
@@ -48,6 +50,8 @@ Public Sub PZ_KeyRedo()
     Select Case ActiveSheet.CodeName
         Case "Sheet2": Sheet2.PZ_DoRedo      'FillIndex
         Case "Sheet1": Sheet1.CI_DoRedo      'ConduitIndex
+        Case "Sheet8": Sheet8.RD_DoRedo      'Ref Documents & Deviations
+        Case "Sheet10": Sheet10.PD_DoRedo    'Project Description
     End Select
 End Sub
 
