@@ -263,6 +263,24 @@ export async function downloadIdpWorkbook(payload) {
   }
 }
 
+// Save a conduit-list CSV to disk via a native Save-As dialog (browser downloads don't
+// work inside the LISA desktop webview). payload: { csv, filename, default_dir }.
+// Returns { ok, path } | { ok:false, cancelled:true } | { ok:false, error }.
+export async function exportIdpConduitList(payload) {
+  try {
+    const res = await fetch('/api/idp-gen/export-conduit-list', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) return { ok: false, error: data.error || 'Export failed' }
+    return data
+  } catch {
+    return { ok: false, error: 'Could not reach IDP_Generation. Is the service running?' }
+  }
+}
+
 export async function downloadIdpWireLabels(fillIndex, filename) {
   try {
     const res = await fetch('/api/idp-gen/wire-labels', {

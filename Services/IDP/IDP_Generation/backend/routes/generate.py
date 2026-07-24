@@ -157,6 +157,50 @@ def browse_folder():
         return jsonify({"path": None, "error": str(e)})
 
 
+# ── Export conduit-list CSV ──────────────────────────────────────────────────
+
+@idp_gen_bp.route("/export-conduit-list", methods=["POST"])
+def export_conduit_list():
+    """Save a conduit-list CSV to a location the user picks (native Save-As dialog).
+
+    A browser-style download does not work inside the LISA desktop webview, so the
+    frontend hands us the finished CSV text and we write it to disk here.
+
+    Body: { "csv": "<text>", "filename": "name.csv", "default_dir": "C:\\..." }
+    Returns { ok: true, path } | { ok: false, cancelled: true } | { ok: false, error }.
+    """
+    body = request.get_json(silent=True) or {}
+    csv_text = body.get("csv", "")
+    if not csv_text:
+        return jsonify({"ok": False, "error": "No CSV content to save."}), 400
+    filename = body.get("filename") or "conduit_list.csv"
+    default_dir = body.get("default_dir") or ""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes("-topmost", True)
+        path = filedialog.asksaveasfilename(
+            title="Save Conduit List CSV",
+            initialfile=filename,
+            initialdir=default_dir or None,
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        root.destroy()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    if not path:
+        return jsonify({"ok": False, "cancelled": True})
+    try:
+        # utf-8-sig writes the BOM so Excel opens the CSV with the right encoding;
+        # newline="" keeps the CSV's own \r\n line endings intact.
+        with open(path, "w", encoding="utf-8-sig", newline="") as fh:
+            fh.write(csv_text)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not write the file: {e}"}), 500
+    return jsonify({"ok": True, "path": path})
+
+
 # â”€â”€ Generate one DWG â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @idp_gen_bp.route("/generate", methods=["POST"])

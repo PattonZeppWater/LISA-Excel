@@ -8,6 +8,7 @@ import {
   downloadIdpWorkbook,
   downloadIdpWireLabels,
   downloadIdpTemplate,
+  exportIdpConduitList,
 } from "../services/api";
 
 // ── Inline styles (matches LISA dark theme) ────────────────────────────────
@@ -45,6 +46,72 @@ const TH_STYLE = {
 };
 
 
+// ── Conduit-list CSV helpers ───────────────────────────────────────────────
+// A conduit list can be uploaded two ways:
+//   .txt  — one conduit name per line (or comma-separated); every listed name is generated.
+//   .csv  — headers "Conduit Name","Enabled/Disabled" where 1 = generate, 0 = skip.
+// Export writes that CSV with every conduit enabled (1) by default so it can be edited
+// in Excel and re-uploaded. Both upload forms feed the same "generate from list" flow.
+
+function csvEscape(v) {
+  const s = String(v ?? "");
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+// Minimal RFC-4180-ish CSV parser: handles quoted fields, "" escapes, and CRLF/LF.
+function parseCsvRows(text) {
+  const rows = [];
+  let row = [], field = "", inQ = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (inQ) {
+      if (c === '"') {
+        if (text[i + 1] === '"') { field += '"'; i++; }
+        else inQ = false;
+      } else field += c;
+    } else if (c === '"') {
+      inQ = true;
+    } else if (c === ",") {
+      row.push(field); field = "";
+    } else if (c === "\n") {
+      row.push(field); rows.push(row); row = []; field = "";
+    } else if (c !== "\r") {
+      field += c;
+    }
+  }
+  if (field !== "" || row.length) { row.push(field); rows.push(row); }
+  return rows.filter(r => r.some(c => String(c).trim() !== ""));
+}
+
+// Enabled conduit names from a CSV → { names, enabled, disabled }. A row is DISABLED
+// only when its 2nd column is explicitly 0 / no / false / off; a missing or blank flag
+// counts as enabled (lenient). Names are de-duped case-insensitively.
+function namesFromCsv(text) {
+  const rows = parseCsvRows(text);
+  if (!rows.length) return { names: [], enabled: 0, disabled: 0 };
+  let start = 0;
+  const h0 = String(rows[0][0] || "").trim().toLowerCase();
+  if (h0.includes("conduit") || h0 === "name") start = 1;   // skip a header row
+  const seen = new Set(), names = [];
+  let disabled = 0;
+  for (let i = start; i < rows.length; i++) {
+    const name = String(rows[i][0] || "").trim();
+    if (!name) continue;
+    const flag = String(rows[i][1] ?? "").trim();
+    let on;
+    if (rows[i].length < 2 || flag === "") on = true;
+    else {
+      const num = Number(flag);
+      on = Number.isNaN(num) ? !/^(no|false|disabled|off)$/i.test(flag) : num !== 0;
+    }
+    if (!on) { disabled++; continue; }
+    const k = name.toUpperCase();
+    if (!seen.has(k)) { seen.add(k); names.push(name); }
+  }
+  return { names, enabled: names.length, disabled };
+}
+
+
 // ── Component ──────────────────────────────────────────────────────────────
 
 // Persist the working session so exiting LISA / switching tabs doesn't wipe the loaded
@@ -79,8 +146,9 @@ export default function IdpGeneration() {
   const autocadPollRef  = useRef(null);
   const stopRef         = useRef(false);   // "Stop Generating" flag for Generate All
   const abortMap        = useRef({});       // { conduit_ident: AbortController } for in-flight generations
-  const [txtNames, setTxtNames]       = useState(null);  // conduit names parsed from an uploaded .txt list
+  const [txtNames, setTxtNames]       = useState(null);  // conduit names to generate, from an uploaded .txt/.csv list
   const [txtFileName, setTxtFileName] = useState("");
+  const [listSummary, setListSummary] = useState("");    // e.g. "CSV: 12 enabled, 3 disabled"
   const txtInputRef     = useRef(null);
 
   // ── AutoCAD status polling ────────────────────────────────────────────────
@@ -144,6 +212,16 @@ export default function IdpGeneration() {
 
   // ── File handling ────────────────────────────────────────────────────────
 
+  // Clear any uploaded conduit-name list (.txt/.csv). Called whenever a NEW workbook is
+  // loaded so a stale list from the previous file can't linger or mis-match the new
+  // conduits (which hid the "Generate from list" option for the newly loaded workbook).
+  function clearUploadedList() {
+    setTxtNames(null);
+    setTxtFileName("");
+    setListSummary("");
+    if (txtInputRef.current) txtInputRef.current.value = "";
+  }
+
   async function acceptFile(file) {
     if (!file) return;
     const ext = file.name.split(".").pop().toLowerCase();
@@ -161,6 +239,7 @@ export default function IdpGeneration() {
       return;
     }
     setWb(result.data);
+    clearUploadedList();
     setActiveTab("conduit");
   }
 
@@ -194,6 +273,7 @@ export default function IdpGeneration() {
       return;
     }
     setWb(result.data);
+    clearUploadedList();
     setActiveTab("conduit");
   }
 
@@ -394,25 +474,78 @@ export default function IdpGeneration() {
       : { type: "success", message: `Generate All finished — ${idents.length} conduit(s) processed. See the log for per-file results.` });
   }
 
-  // ── Upload a .txt of conduit names → generate only those ─────────────────
-  async function handleTxtFile(file) {
+  // ── Upload a conduit list (.txt or .csv) → generate only those ───────────
+  // .txt: one name per line / comma-separated — every listed name is generated.
+  // .csv: "Conduit Name","Enabled/Disabled" (1/0) — only the enabled (1) names.
+  async function handleListFile(file) {
     if (!file) return;
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
     try {
-      const text = await file.text();
-      // one name per line or comma-separated; trim, drop blanks, de-dupe (case-insensitive)
-      const seen = new Set(); const uniq = [];
-      for (const raw of text.split(/[\r\n,]+/)) {
-        const nm = raw.trim();
-        if (!nm) continue;
-        const k = nm.toUpperCase();
-        if (!seen.has(k)) { seen.add(k); uniq.push(nm); }
+      // Strip a leading UTF-8 BOM (Excel's "CSV UTF-8" adds one) so it never sticks to
+      // the first conduit name / header cell.
+      const text = (await file.text()).replace(/^\uFEFF/, "");
+      if (ext === "csv") {
+        const { names, disabled } = namesFromCsv(text);
+        setTxtNames(names);
+        setTxtFileName(file.name);
+        setListSummary(`CSV: ${names.length} enabled` + (disabled ? `, ${disabled} disabled` : ""));
+      } else {
+        // .txt — trim, drop blanks, de-dupe (case-insensitive); all listed = generate
+        const seen = new Set(); const uniq = [];
+        for (const raw of text.split(/[\r\n,]+/)) {
+          const nm = raw.trim();
+          if (!nm) continue;
+          const k = nm.toUpperCase();
+          if (!seen.has(k)) { seen.add(k); uniq.push(nm); }
+        }
+        setTxtNames(uniq);
+        setTxtFileName(file.name);
+        setListSummary("");
       }
-      setTxtNames(uniq);
-      setTxtFileName(file.name);
     } catch {
-      setStatus({ type: "error", message: "Could not read the .txt file." });
+      setStatus({ type: "error", message: `Could not read the ${ext === "csv" ? ".csv" : ".txt"} file.` });
     }
     if (txtInputRef.current) txtInputRef.current.value = "";  // allow re-selecting the same file
+  }
+
+  // ── Export a CSV of every conduit name + an Enabled/Disabled (1/0) column ──
+  // All conduits default to enabled (1). Edit the file in Excel (set 0 to skip a
+  // conduit), then re-upload it via "Upload conduit list" to generate the enabled ones.
+  async function handleExportConduitCsv() {
+    if (!wb || !wb.conduit_index) return;
+    const seen = new Set();
+    const rows = [["Conduit Name", "Enabled/Disabled"]];
+    for (const r of wb.conduit_index) {
+      const tag = String(r.Cond_Tag ?? "").trim();
+      if (!tag) continue;
+      const k = tag.toUpperCase();
+      if (seen.has(k)) continue;
+      seen.add(k);
+      rows.push([tag, "1"]);
+    }
+    if (rows.length === 1) {
+      setStatus({ type: "error", message: "No conduit names to export." });
+      return;
+    }
+    // Build the CSV text (no BOM \u2014 the backend writes it with utf-8-sig). A browser blob
+    // download does not work in the LISA desktop webview, so we hand the text to the
+    // backend, which pops a native Save-As dialog (defaulting to the output folder) and
+    // writes the file to the location the user picks.
+    const csv = rows.map(cols => cols.map(csvEscape).join(",")).join("\r\n");
+    const base = (wb.filename || "workbook").replace(/\.[^.]+$/, "");
+    setLoading("exportcsv");
+    const result = await exportIdpConduitList({
+      csv,
+      filename: `${base}_conduit_list.csv`,
+      default_dir: outputFolder || "",
+    });
+    setLoading(null);
+    if (result.cancelled) return;              // user closed the Save dialog \u2014 no message
+    if (!result.ok) {
+      setStatus({ type: "error", message: `CSV export failed: ${result.error}` });
+      return;
+    }
+    setStatus({ type: "success", message: `Conduit list CSV saved to: ${result.path}` });
   }
 
   async function handleGenerateFromList() {
@@ -698,16 +831,19 @@ export default function IdpGeneration() {
               </button>
             )}
 
-            {/* ── Generate from a conduit-name list (.txt) ── */}
+            {/* ── Generate from a conduit-name list (.txt or .csv) ── */}
             <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "4px",
                           borderTop: "1px solid var(--border)", paddingTop: "8px" }}>
-              <input ref={txtInputRef} type="file" accept=".txt" style={{ display: "none" }}
-                     onChange={e => handleTxtFile(e.target.files[0])} />
+              <input ref={txtInputRef} type="file" accept=".txt,.csv" style={{ display: "none" }}
+                     onChange={e => handleListFile(e.target.files[0])} />
               <button className="btn btn-primary" style={genBtnStyle}
                       onClick={() => txtInputRef.current?.click()} disabled={!wb || busy || generating}
-                      title="Upload a .txt list of conduit names (one per line) to generate just those">
-                Upload conduit list (.txt)
+                      title={"Upload a conduit list to generate just those:\n• .txt — one conduit name per line\n• .csv — a \"Conduit Name\",\"Enabled/Disabled\" (1/0) file (only the 1s generate)"}>
+                Upload conduit list (.txt / .csv)
               </button>
+              {listSummary && (
+                <span style={{ color: "var(--text-dim)", fontSize: "0.70rem" }}>{listSummary}</span>
+              )}
               {txtMatch && (
                 <span style={{ color: "var(--text-label)", fontSize: "0.72rem" }}>
                   {txtFileName}: <b style={{ color: "var(--status-success-soft)" }}>{txtMatch.matched.length}</b> matched
@@ -811,6 +947,13 @@ export default function IdpGeneration() {
               title="Copy current index as JSON"
             >
               📤 Copy JSON
+            </button>
+            <button
+              onClick={handleExportConduitCsv}
+              style={{ background: "none", border: "1px solid var(--border-strong)", color: "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: "pointer", fontSize: "0.75rem" }}
+              title={'Download a CSV of every conduit name with an Enabled/Disabled (1/0) column.\nEdit it in Excel (set 0 to skip a conduit), then re-upload via "Upload conduit list" to generate the enabled ones.'}
+            >
+              ⬇ Conduit list CSV
             </button>
           </div>
           {jsonPasteOpen && (
