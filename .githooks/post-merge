@@ -1,0 +1,61 @@
+#!/bin/sh
+# LISA post-merge hook — keeps your machine's build outputs in sync after a `git pull`.
+#
+# WHY THIS EXISTS
+#   .venv/ and Frontend/frontend/dist/ are gitignored on purpose (a venv is machine-
+#   specific; dist is generated). Git therefore never updates them on a pull, which is
+#   why a pulled checkout can still run the OLD UI or miss a new dependency. This hook
+#   regenerates exactly what changed, so `git pull` leaves you fully up to date.
+#
+# ENABLE (once per clone):  git config core.hooksPath .githooks
+#   (SETUP - Run First.bat does this for you; run it once on an existing checkout.)
+#
+# It only acts when the relevant tracked files changed in the merge, so a normal pull
+# with no dep/frontend changes costs nothing.
+
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+cd "$ROOT" || exit 0
+
+# Files changed by this merge (state before the merge = ORIG_HEAD; fall back to HEAD@{1}).
+if git rev-parse --verify -q ORIG_HEAD >/dev/null 2>&1; then
+  CHANGED="$(git diff --name-only ORIG_HEAD HEAD 2>/dev/null)"
+else
+  CHANGED="$(git diff --name-only 'HEAD@{1}' HEAD 2>/dev/null)"
+fi
+
+# ── 1. Python deps: reinstall only if requirements.txt changed ────────────────
+if printf '%s\n' "$CHANGED" | grep -q '^requirements\.txt$'; then
+  if [ -x ".venv/Scripts/python.exe" ]; then
+    PY=".venv/Scripts/python.exe"
+  elif [ -x ".venv/bin/python" ]; then
+    PY=".venv/bin/python"
+  else
+    PY=""
+  fi
+  if [ -n "$PY" ]; then
+    echo "[post-merge] requirements.txt changed -> updating .venv ..."
+    "$PY" -m pip install -r requirements.txt --quiet && echo "[post-merge] .venv up to date."
+  else
+    echo "[post-merge] requirements.txt changed but no .venv found -> run 'SETUP - Run First.bat'."
+  fi
+fi
+
+# ── 2. Frontend: rebuild dist only if the frontend source changed ─────────────
+if printf '%s\n' "$CHANGED" | grep -q '^Frontend/frontend/src/'; then
+  NPM=""
+  if command -v npm >/dev/null 2>&1; then
+    NPM="npm"
+  elif [ -x "/c/node20/node-v20.18.1-win-x64/npm.cmd" ]; then
+    export PATH="/c/node20/node-v20.18.1-win-x64:$PATH"
+    NPM="/c/node20/node-v20.18.1-win-x64/npm.cmd"
+  fi
+  if [ -n "$NPM" ]; then
+    echo "[post-merge] frontend source changed -> rebuilding dist ..."
+    ( cd Frontend/frontend && "$NPM" run build ) && echo "[post-merge] frontend rebuilt."
+  else
+    echo "[post-merge] frontend source changed but Node/npm not found."
+    echo "[post-merge]   rebuild manually:  cd Frontend/frontend && npm run build"
+  fi
+fi
+
+exit 0

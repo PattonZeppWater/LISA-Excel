@@ -1,0 +1,3 @@
+# Git hooks must have LF line endings to run under Git Bash / sh, even on Windows
+# checkouts where autocrlf would otherwise convert them to CRLF (which breaks them).
+.githooks/** text eol=lf

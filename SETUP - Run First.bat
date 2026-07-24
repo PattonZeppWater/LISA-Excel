@@ -91,6 +91,15 @@ echo [3/4] Installing dependencies ^(a few minutes^) ...
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 ".venv\Scripts\python.exe" ".venv\Scripts\pywin32_postinstall.py" -install >nul 2>&1
 
+REM --- enable the auto-sync git hook (repo checkout only; a bundle has no .git) ---
+REM After this, a `git pull` auto-rebuilds the venv (if requirements.txt changed) and the
+REM frontend (if its source changed), so a pulled checkout is never left running old code.
+git rev-parse --is-inside-work-tree >nul 2>&1
+if not errorlevel 1 (
+  git config core.hooksPath .githooks >nul 2>&1
+  echo       Git auto-sync hook enabled ^(pull rebuilds venv/frontend as needed^).
+)
+
 echo [4/4] Done.
 echo.
 echo ============================================================
