@@ -25,7 +25,8 @@ fi
 
 # ── 1. Python deps: reinstall only if requirements.txt changed ────────────────
 if printf '%s\n' "$CHANGED" | grep -q '^requirements\.txt$'; then
-  if [ -x ".venv/Scripts/python.exe" ]; then
+  # Use -f (exists), not -x: Git Bash reports Windows .exe/.cmd as non-executable.
+  if [ -f ".venv/Scripts/python.exe" ]; then
     PY=".venv/Scripts/python.exe"
   elif [ -x ".venv/bin/python" ]; then
     PY=".venv/bin/python"
@@ -45,7 +46,7 @@ if printf '%s\n' "$CHANGED" | grep -q '^Frontend/frontend/src/'; then
   NPM=""
   if command -v npm >/dev/null 2>&1; then
     NPM="npm"
-  elif [ -x "/c/node20/node-v20.18.1-win-x64/npm.cmd" ]; then
+  elif [ -f "/c/node20/node-v20.18.1-win-x64/npm.cmd" ]; then
     export PATH="/c/node20/node-v20.18.1-win-x64:$PATH"
     NPM="/c/node20/node-v20.18.1-win-x64/npm.cmd"
   fi
