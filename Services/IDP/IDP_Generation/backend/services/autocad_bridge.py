@@ -23,6 +23,7 @@ import os
 import re
 import sys
 import json
+import math
 import time
 import shutil
 import difflib
@@ -174,6 +175,62 @@ INST_PWR_DROP = float(os.getenv("IDP_INST_PWR_DROP", "1.5"))
 # current group so those terminals don't collide. A power instrument is dropped (its
 # top is just the wire rows), so it needs no reserve. Tunable.
 INST_TOP_RESERVE = float(os.getenv("IDP_INST_TOP_RESERVE", "0.75"))
+
+# A TSP/signal instrument group starts too high on the sheet -> drop the whole group.
+TSP_GROUP_DROP = float(os.getenv("IDP_TSP_GROUP_DROP", "1.0"))
+# A generated GND symbol + its wire sit too high -> drop them together by this much.
+GND_DROP = float(os.getenv("IDP_GND_DROP", "1.0"))
+
+# ── Cross-conduit REF. DWG note (yellow bracket + "REF. DWG / <#>" callout) ──────
+# Placed only on a 4-wire instrument whose power/TSP counterpart is in another conduit
+# (loop["ref_dwg"] set by note_refs). The note = the PWR_Vertical-Bracket dynamic block
+# (the "yellow bracket") bracketing the terminal landings whose wire is NOT on this sheet
+# + a separate "REF. DWG / <#>" MTEXT. Offsets/rotation/flip below are measured straight
+# from the right-side example on Inst_spacing.dwg (relative to the instrument insertion):
+#   TSP drawing  (signal here) -> bracket ABOVE the not-here L/N terminals   (rot 180)
+#   POWER drawing(power here)  -> bracket beside the not-here signal terminals(rot 270)
+NOTE_BRACKET = "PWR_Vertical-Bracket_for Description"   # the yellow bracket dynamic block
+NOTE_TEXT_H  = float(os.getenv("IDP_NOTE_TEXT_H", "0.125"))   # REF.DWG MTEXT height
+NOTE_TEXT_W  = float(os.getenv("IDP_NOTE_TEXT_W", "3.0"))     # REF.DWG MTEXT box width
+NOTE_BRACKET_DIST = float(os.getenv("IDP_NOTE_BRACKET_DIST", "2.0"))   # Distance1 (span, 2 terminals)
+
+# (bracket_dx, bracket_dy, rotation_deg, flip, text_dx, text_dy, text_attach) per
+# (is_power, side); offsets relative to the instrument's insertion point. From the
+# right-side example on Inst_spacing.dwg. text_attach is the AutoCAD MTEXT attachment
+# point (6 = middle-right, 4 = middle-left, 8 = bottom-center) so the text centers/aligns
+# exactly as the template: beside the bracket on a POWER drawing, centered above on a TSP.
+_ATTACH_MIDDLE_LEFT, _ATTACH_MIDDLE_RIGHT, _ATTACH_BOTTOM_CENTER = 4, 6, 8
+_NOTE_LAYOUT = {
+    (True,  "R"): (-0.5, -0.25, 270.0, 0, -0.8, -0.25, _ATTACH_MIDDLE_RIGHT),
+    # Left is the mirror of right (bracket 0.5 from the instrument on the +x side). The
+    # flip shifts the block's reported insertion by ~0.3, so insert at +0.8 to land the
+    # flipped bracket at instrument+0.5 (symmetric with the right side's instrument-0.5).
+    (True,  "L"): ( 0.8, -0.25, 270.0, 1,  0.8, -0.25, _ATTACH_MIDDLE_LEFT),
+    (False, "R"): ( 1.0,  1.25, 180.0, 0,  1.0,  1.55, _ATTACH_BOTTOM_CENTER),
+    (False, "L"): (-1.0,  1.25, 180.0, 0, -1.0,  1.55, _ATTACH_BOTTOM_CENTER),
+}
+
+
+def _build_note_items(side: str, is_power: bool, side_x: float, inst_y: float, ref_text: str) -> list:
+    """Plan items for a cross-conduit note: the yellow bracket (PWR_Vertical-Bracket,
+    rotated/flipped to bracket the NOT-here terminals) + the two-line 'REF. DWG / <#>'
+    MTEXT (matching the template: "REF. DWG" over the number, \\P = line break). side is
+    'R' (dst) or 'L' (src). The two items share a note_group id so render_plan groups them
+    into one AutoCAD group (move the bracket, the text follows). Returns [] if no ref."""
+    if not ref_text:
+        return []
+    bdx, bdy, rot, flip, tdx, tdy, attach = _NOTE_LAYOUT[(bool(is_power), side)]
+    gid = f"{side}{int(round(side_x))}_{int(round(inst_y * 100))}"   # unique per note on the sheet
+    bracket = {"role": "note", "name": NOTE_BRACKET, "x": side_x + bdx, "y": inst_y + bdy,
+               "visibility": None, "attrs": {}, "kind": "block", "height": 0.0,
+               "rotation_deg": rot, "dyn_props": {"Distance1": NOTE_BRACKET_DIST, "Flip state1": flip},
+               "note_group": gid}
+    text = {"role": "refdwg", "name": None, "x": side_x + tdx, "y": inst_y + tdy,
+            "visibility": None, "attrs": {}, "kind": "mtext",
+            "text": "REF. DWG\\P" + str(ref_text), "attach": attach,
+            "text_height": NOTE_TEXT_H, "width": NOTE_TEXT_W, "height": 0.0,
+            "note_group": gid}
+    return [bracket, text]
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -439,17 +496,29 @@ def build_layout_plan(conduit_data: dict, loop_list: list,
         # the instrument's Line(+)/Neutral(-) terminals; the instrument is dropped
         # INST_PWR_DROP so its L/N meet the connector's exit. Term attrs are left as-is.
         is_power = _is_power_group(group)
+        # A TSP/signal instrument group starts a touch high; drop the WHOLE group by
+        # TSP_GROUP_DROP so the instrument + its wires + note all shift down together
+        # (lowering anchor_y keeps everything aligned). Power groups already drop via
+        # INST_PWR_DROP, so this is signal-instrument-only.
+        if (src_is_inst or dst_is_inst) and not is_power:
+            anchor_y = anchor_y - TSP_GROUP_DROP
         inst_y = anchor_y - (INST_PWR_DROP if is_power else 0.0)
         if dst_is_inst:
             _add("instrument", dst_name, RIGHT_X, inst_y, loop.get("dst_block_visibility"),
                  _maybe_hide_terms(_build_dst_attrs_group(group), group[0]))
             if is_power:
                 _add("pwrwire", INST_PWR_WIRE_R, RIGHT_X + PWRWIRE_DX, anchor_y + PWRWIRE_DY, None, {})
+            for _ni in _build_note_items("R", is_power, RIGHT_X, inst_y, loop.get("ref_dwg")):
+                _ni["group"] = gidx
+                items.append(_ni)
         elif src_is_inst:
             _add("instrument", src_name, LEFT_X, inst_y, loop.get("src_block_visibility"),
                  _maybe_hide_terms(_build_src_attrs_group(group), group[0]))
             if is_power:
                 _add("pwrwire", INST_PWR_WIRE_L, LEFT_X + PWRWIRE_DX, anchor_y + PWRWIRE_DY, None, {})
+            for _ni in _build_note_items("L", is_power, LEFT_X, inst_y, loop.get("ref_dwg")):
+                _ni["group"] = gidx
+                items.append(_ni)
 
         # Colours live on the anchor (Color 1-4); wire labels are per-row (each row
         # carries its two wires in Wire Label 1 & 2).
@@ -486,6 +555,11 @@ def build_layout_plan(conduit_data: dict, loop_list: list,
             _gblk = str(g.get("src_block") or g.get("dst_block") or "").lower()
             if "htr" in _gblk or "heater" in _gblk:
                 wc = max(2, wc)
+            # A dedicated ground conductor (GND_L/GND_R) sits too high beside the
+            # instrument -> drop the whole ground row (its wire AND both GND symbols) by
+            # GND_DROP so it stays connected but clears the instrument/note.
+            gnd_off = -GND_DROP if ("gnd" in str(g.get("src_block") or "").lower()
+                                    or "gnd" in str(g.get("dst_block") or "").lower()) else 0.0
             # A POWER instrument carries ONLY its L/N power feed (the anchor row) into the
             # conduit; the signal-pair continuation rows stay part of the one instrument
             # symbol but their wires are not drawn -- so a 4W power instrument reads as a
@@ -498,7 +572,7 @@ def build_layout_plan(conduit_data: dict, loop_list: list,
                 ci += 1
                 if _skip_wires:
                     continue
-                wy = gy - (w * 0.5)
+                wy = gy - (w * 0.5) + gnd_off
                 _wattrs = _build_wire_attrs(g, w, color_override=col,
                                             src_label_override=sl, dst_label_override=dl)
                 if g.get("Wire_Type"):
@@ -514,10 +588,10 @@ def build_layout_plan(conduit_data: dict, loop_list: list,
                     _add("dst", g.get("dst_block"), RIGHT_X, wy, g.get("dst_block_visibility"),
                          _maybe_hide_terms(_build_dst_attrs(g), g) if w == 0 else {})
             if not src_is_inst and not src_is_bigtb and not src_is_pullbox and g.get("src_block"):
-                _add("src", g.get("src_block"), LEFT_X, gy + _shld_offset(g.get("src_block")),
+                _add("src", g.get("src_block"), LEFT_X, gy + _shld_offset(g.get("src_block")) + gnd_off,
                      g.get("src_block_visibility"), _maybe_hide_terms(_build_src_attrs(g), g))
             if not dst_is_inst and not dst_is_bigtb and not dst_is_pullbox and g.get("dst_block"):
-                _add("dst", g.get("dst_block"), RIGHT_X, gy + _shld_offset(g.get("dst_block")),
+                _add("dst", g.get("dst_block"), RIGHT_X, gy + _shld_offset(g.get("dst_block")) + gnd_off,
                      g.get("dst_block_visibility"), _maybe_hide_terms(_build_dst_attrs(g), g))
             gy = gy - wc * 0.5
 
@@ -645,12 +719,92 @@ def paginate_loops(loop_list: list, block_heights: dict | None = None,
     return chunks
 
 
+def _apply_dyn_props(block_ref, props: dict, warnings: list):
+    """Set named dynamic-block properties (e.g. the bracket's Distance1 / Flip state1).
+    Best-effort + busy-safe: a property that isn't present or won't take the value is
+    logged and skipped, never fatal."""
+    try:
+        if not _com_retry(lambda: block_ref.IsDynamicBlock, any_error=True):
+            return
+        dps = _com_retry(lambda: block_ref.GetDynamicBlockProperties(), any_error=True)
+        by_name = {}
+        for p in dps:
+            try:
+                by_name[str(_com_retry(lambda: p.PropertyName, any_error=True))] = p
+            except Exception:
+                pass
+        for name, val in (props or {}).items():
+            p = by_name.get(name)
+            if p is None:
+                continue
+            # Flip parameters reject a plain Python int ("Invalid input"); they take a
+            # VT_I2 (short) VARIANT. Try the raw value first (works for the linear
+            # Distance1 double), then fall back to a VT_I2 short for flips/lookups.
+            try:
+                _com_retry(lambda pp=p, vv=val: setattr(pp, "Value", vv), any_error=True)
+            except Exception:
+                try:
+                    sval = win32com.client.VARIANT(pythoncom.VT_I2, int(val))
+                    _com_retry(lambda pp=p, vv=sval: setattr(pp, "Value", vv), any_error=True)
+                except Exception as e:
+                    warnings.append(f"note bracket dyn prop {name!r} not set: {e}")
+        _com_retry(lambda: block_ref.Update(), any_error=True)
+    except Exception as e:
+        warnings.append(f"note bracket dyn props failed: {e}")
+
+
+def _add_mtext(model, x: float, y: float, text: str, height: float, width: float,
+               warnings: list, attach=None):
+    """Add an MTEXT entity (the REF. DWG callout) and return it (or None). Block-only
+    render_plan can't place text, so this is the one direct AddMText path. `attach` is the
+    AutoCAD attachment point (e.g. 6 middle-right, 8 bottom-center) so the text centers on
+    (x, y) like the template. Busy-safe; a failure is logged and skipped, never fatal."""
+    try:
+        mt = _com_retry(lambda: model.AddMText(_pt(x, y), float(width), str(text)), any_error=True)
+        try:
+            mt.Height = float(height)
+        except Exception:
+            pass
+        if attach is not None:
+            # Set the attachment, then re-assert the insertion point so (x, y) is the
+            # attachment location (AutoCAD otherwise keeps the old top-left anchor).
+            try:
+                _com_retry(lambda: setattr(mt, "AttachmentPoint", int(attach)), any_error=True)
+                _com_retry(lambda: setattr(mt, "InsertionPoint", _pt(x, y)), any_error=True)
+            except Exception:
+                pass
+        _com_retry(lambda: mt.Update(), any_error=True)
+        return mt
+    except Exception as e:
+        warnings.append(f"could not add REF.DWG text {text!r}: {e}")
+        _log(f"  REF.DWG mtext failed: {e}")
+        return None
+
+
+def _group_entities(model, ents: list, name: str, warnings: list):
+    """Put the note's bracket + text into one AutoCAD group so moving one moves both
+    (matches how the note behaves on the template). Best-effort / non-fatal."""
+    ents = [e for e in ents if e is not None]
+    if len(ents) < 2:
+        return
+    try:
+        # Reach the document from a placed ENTITY (AcadEntity has .Document; AcadModelSpace
+        # does not expose it reliably). Groups live on the document.
+        doc = _com_retry(lambda: ents[0].Document, any_error=True)
+        grp = _com_retry(lambda: doc.Groups.Add(name), any_error=True)
+        arr = win32com.client.VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_DISPATCH, ents)
+        _com_retry(lambda: grp.AppendItems(arr), any_error=True)
+    except Exception as e:
+        warnings.append(f"note group {name!r} failed (non-fatal): {e}")
+
+
 def render_plan(model, plan: dict, warnings: list) -> list:
     """Execute a layout plan against AutoCAD model space — the only COM-coupled
     part of generation. Returns the list of blocks actually placed (with each
     block's live layer read from the open doc) for the generation report. A block
     that fails to insert is skipped (with a warning already logged)."""
     placed = []
+    note_groups = {}   # note_group id -> [entities to group together]
     c = plan.get("conduit")
     if c:
         ref = _insert_block(model, c["x"], c["y"], c["name"], warnings)
@@ -660,13 +814,30 @@ def render_plan(model, plan: dict, warnings: list) -> list:
             _set_attrs(ref, c["attrs"], warnings)
             placed.append(_placed_record("conduit", 0, c, ref))
     for idx, it in enumerate(plan.get("items", []), start=1):
+        gid = it.get("note_group")
+        if it.get("kind") == "mtext":
+            # REF. DWG callout text — not a block, so it goes through AddMText, not InsertBlock.
+            mt = _add_mtext(model, it["x"], it["y"], it.get("text", ""),
+                            it.get("text_height", 0.125), it.get("width", 3.0), warnings,
+                            attach=it.get("attach"))
+            if gid and mt is not None:
+                note_groups.setdefault(gid, []).append(mt)
+            continue
         ref = _insert_block(model, it["x"], it["y"], it["name"], warnings)
         if ref is None:
             continue
+        if it.get("rotation_deg") is not None:
+            _com_retry(lambda: setattr(ref, "Rotation", math.radians(it["rotation_deg"])), any_error=True)
+        if it.get("dyn_props"):
+            _apply_dyn_props(ref, it["dyn_props"], warnings)
         if it.get("visibility"):
             _apply_visibility(ref, it["visibility"], warnings)
         _set_attrs(ref, it["attrs"], warnings)
+        if gid:
+            note_groups.setdefault(gid, []).append(ref)
         placed.append(_placed_record(it["role"], idx, it, ref))
+    for gid, ents in note_groups.items():
+        _group_entities(model, ents, f"IDPNOTE_{gid}", warnings)
     return placed
 
 
