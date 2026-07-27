@@ -770,7 +770,12 @@ def emit_and_validate(placed: list, output_path: str, warnings: list) -> dict:
     try:
         harness = _find_harness_root()
         if not harness:
-            warnings.append("validation skipped: cad_ai_harness not found")
+            # The cad_ai_harness is an OPTIONAL, dev-only post-generation validator that
+            # isn't part of this repo (found via $IDP_HARNESS_DIR or a local folder). Its
+            # absence is normal on any machine that doesn't have it -- the drawing still
+            # generates fine -- so log it rather than surface a user-facing "missing"
+            # warning that alarms people for no reason.
+            _log("validation skipped: cad_ai_harness not present (optional dev tool)")
             return result
 
         job_name = os.path.splitext(os.path.basename(output_path))[0]
