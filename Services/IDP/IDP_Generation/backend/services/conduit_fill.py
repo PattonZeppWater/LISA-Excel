@@ -19,7 +19,8 @@ Assumptions (documented; the workbook doesn't carry them — edit the tables bel
   * Individual-conductor insulation is THHN/THWN. #16 uses the TFFN fixture-wire area
     (THHN isn't listed below 14 AWG).
   * Cable overall diameters (inches), from manufacturer data / typical product:
-      - TSP single shielded pair: #18 = 0.222" (Belden 8760), #16 = 0.313" (Belden 8719).
+      - TSP single shielded pair: #18 = 0.222" (Belden 8760), #16 = 0.313" (Belden 8719),
+        #14 = 0.355" (Belden 8720). All three are the manufacturer's nominal OD.
       - CAT-5/5e/6/6A: 0.335" (Southwire Cat6A 23AWG/4pr).
       - FIBER: 0.30" representative (indoor/outdoor distribution; construction-dependent).
   * MFG_CABLE has no single spec here, so its conductors are approximated individually by
@@ -45,7 +46,7 @@ _WIRE_AREA_SQIN = {
 _CAT_OD_IN = 0.335    # CAT-5/5e/6/6A (Southwire Cat6A 23AWG/4pr; user-confirmed)
 _FIBER_OD_IN = 0.30   # representative fiber distribution cable (construction-dependent)
 # TSP (single shielded pair) OD by conductor gauge; falls back to _TSP_OD_DEFAULT.
-_TSP_OD_BY_GAUGE_IN = {"18": 0.222, "16": 0.313, "14": 0.35}
+_TSP_OD_BY_GAUGE_IN = {"18": 0.222, "16": 0.313, "14": 0.355}
 _TSP_OD_DEFAULT_IN = 0.30
 
 
