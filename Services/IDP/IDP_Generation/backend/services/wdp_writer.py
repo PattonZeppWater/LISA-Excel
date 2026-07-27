@@ -268,24 +268,35 @@ def _find_template_file(pattern: str):
     return hits[0] if hits else None
 
 
+# Number of GENERAL sheets that lead the deliverable (cover=1, index=2, legend=3). The
+# conduit drawings' sheet numbers continue after these, so a project offsets by this much.
+GENERAL_SHEET_COUNT = len(_GENERAL_SHEETS)
+
+
 def ensure_project_sheets(output_folder: str, project_number: str) -> list:
     """Copy the GENERAL template sheets (G1-G3) into output_folder renamed to the project
     number, plus the title-block map (.wdl -> <project>_wdtitle.wdl) and drawing template
-    (.wdt). Copy-if-missing, so it's safe to call once per conduit. Returns the GENERAL dwg
-    names now present. Never raises."""
+    (.wdt). Copy-if-missing, so it's safe to call once per conduit.
+
+    Returns a list of (dst_name, sheet_number, drawing_no, newly_copied) for each GENERAL
+    sheet now present, in cover->index->legend order (sheet_number 1,2,3; drawing_no is the
+    filename stem, e.g. '73.1159-G1'). `newly_copied` is True only on the call that first
+    created the file, so the caller can fill its title block exactly once. Never raises."""
     safe = _safe(project_number)
     general = []
     try:
         if not output_folder or not os.path.isdir(output_folder):
             return general
-        for suf, _label in _GENERAL_SHEETS:
+        for i, (suf, _label) in enumerate(_GENERAL_SHEETS, start=1):
             src = _find_template_file("*-%s.dwg" % suf)
             dst_name = "%s-%s.dwg" % (safe, suf)
             dst = os.path.join(output_folder, dst_name)
+            newly = False
             if src and not os.path.exists(dst):
                 shutil.copyfile(src, dst)
+                newly = True
             if os.path.exists(dst):
-                general.append(dst_name)
+                general.append((dst_name, i, os.path.splitext(dst_name)[0], newly))
         wdl = _find_template_file("*_wdtitle.wdl") or _find_template_file("*.wdl")
         if wdl:
             dst = os.path.join(output_folder, "%s_wdtitle.wdl" % safe)

@@ -828,7 +828,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
                  cont_prev: str | None = None,
                  cont_next: str | None = None,
                  project_desc: dict | None = None,
-                 seq_num=None, sheet_max=None) -> dict:
+                 sheet_number=None, drawing_no=None) -> dict:
     """
     Generate one AutoCAD DWG for a single conduit (or one sheet of a multi-sheet
     conduit). For continuation sheets the caller passes:
@@ -839,8 +839,9 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
       project_desc — the workbook's "Project Description" sheet, as {"lines": [...]}
                    (positionally Owner/Job Title/Content/Proj No/Status/Date/Engineer/
                    Drafter — same shape wdp_writer uses for the .wdp's *[1]..*[8]).
-      seq_num — this conduit's sheet number in the project sequence, written to the
-                   title block's SHEET attribute.
+      sheet_number — this sheet's running number in the whole deliverable (cover = 1,
+                   then up with no restart), written to the title block's SHEET attribute.
+      drawing_no — this sheet's drawing number (its filename stem), written to DRAWING_NO.
 
     Both feed _set_title_block_attrs, which writes straight to the title block's own
     attributes using the same tag mapping AutoCAD Electrical's "Update Title Block"
@@ -953,7 +954,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             _log("  ref_docs table: skipped (no ref_doc_rows or dev_rows)")
 
         # ── 8b. Title block ────────────────────────────────────────────────────
-        title_block_values = _build_title_block_values(conduit_data, project_desc, seq_num, sheet_max)
+        title_block_values = _build_title_block_values(conduit_data, project_desc, sheet_number, drawing_no)
         if title_block_values:
             _set_title_block_attrs(doc, title_block_values, warnings)
 
@@ -1067,37 +1068,45 @@ def _clear_model_space(model, warnings: list):
 _TITLEBLOCK_SECTION = "INTERCONNECTION DIAGRAMS"
 
 
-def _build_title_block_values(conduit_data: dict, project_desc: dict | None,
-                              seq_num, sheet_max=None) -> dict:
-    """Map our data onto the title block's own attribute tags (verified present on
-    WML-SI_TITLEBLOCK_SCHEMATIC), the same tags AutoCAD Electrical's "Update Title Block"
-    writes to:
-        OWNER/JOB_TITLE/CONTENT/PROJECT_NO/STATUS/DATE/ENGINEER/DRAFTER  (project lines)
-        DESC1/DESC2/DESC3   -> per-drawing description (Conduit / Source1 / Dest1 names)
-        SECTION             -> the drawing section ("INTERCONNECTION DIAGRAMS")
-        SHEET               -> this drawing's sheet number, as "N" or "N OF <max>"
-    Only includes tags we have a non-blank value for, so a missing Project Description
-    field just leaves that attribute at its template default instead of blanking it.
-
-    NOTE: this title block has NO Previous/Next-sheet, no P/I/L (IEC code), and no
-    separate sheet-maximum attribute -- so the "of <max>" is folded into the single SHEET
-    attribute (the block shows a static 'SHEET' label + this value)."""
+def _project_line_values(project_desc: dict | None) -> dict:
+    """Map the workbook's Project Description lines onto the title block's project tags
+    OWNER/JOB_TITLE/CONTENT/PROJECT_NO/STATUS/DATE/ENGINEER/DRAFTER. Only non-blank lines
+    are included, so a missing field keeps the template default rather than blanking it."""
     values = {}
     lines = (project_desc or {}).get("lines") or []
     for tag, idx in (("OWNER", 0), ("JOB_TITLE", 1), ("CONTENT", 2), ("PROJECT_NO", 3),
                       ("STATUS", 4), ("DATE", 5), ("ENGINEER", 6), ("DRAFTER", 7)):
         if idx < len(lines) and str(lines[idx] or "").strip():
             values[tag] = str(lines[idx]).strip()
+    return values
+
+
+def _build_title_block_values(conduit_data: dict, project_desc: dict | None,
+                              sheet_number=None, drawing_no=None) -> dict:
+    """Map our data onto the title block's own attribute tags (verified present on
+    WML-SI_TITLEBLOCK_SCHEMATIC), the same tags AutoCAD Electrical's "Update Title Block"
+    writes to:
+        OWNER/JOB_TITLE/CONTENT/PROJECT_NO/STATUS/DATE/ENGINEER/DRAFTER  (project lines)
+        DESC1/DESC2/DESC3   -> per-drawing description (Conduit / Source1 / Dest1 names)
+        SECTION             -> the drawing section ("INTERCONNECTION DIAGRAMS")
+        DRAWING_NO          -> this drawing's number (its filename stem, e.g. 73.1159-15e)
+        SHEET               -> this drawing's running sheet number in the deliverable set
+    Only includes tags we have a non-blank value for, so a missing Project Description
+    field just leaves that attribute at its template default instead of blanking it.
+
+    NOTE: DRAWING_NO and SHEET are independent -- the drawing number is the sheet's own id
+    (matches its filename), while SHEET is its position in the whole deliverable (cover = 1,
+    then up with no restart), so a drawing named '-15e' can legitimately be sheet 18."""
+    values = _project_line_values(project_desc)
     for tag, key in (("DESC1", "Cdt_Name"), ("DESC2", "Src_Name01"), ("DESC3", "Dst_Name01")):
         val = (conduit_data or {}).get(key)
         if str(val or "").strip():
             values[tag] = str(val).strip()
     values["SECTION"] = _TITLEBLOCK_SECTION
-    if seq_num is not None and str(seq_num).strip():
-        sheet = str(seq_num).strip()
-        if sheet_max is not None and str(sheet_max).strip() and str(sheet_max).strip() != "0":
-            sheet = f"{sheet} OF {str(sheet_max).strip()}"
-        values["SHEET"] = sheet
+    if drawing_no is not None and str(drawing_no).strip():
+        values["DRAWING_NO"] = str(drawing_no).strip()
+    if sheet_number is not None and str(sheet_number).strip():
+        values["SHEET"] = str(sheet_number).strip()
     return values
 
 
@@ -1153,6 +1162,58 @@ def _set_title_block_attrs(doc, values: dict, warnings: list) -> None:
         warnings.append(f"No '{TITLEBLOCK_NAME}' block found on any layout of this sheet — title block not updated.")
     except Exception as ex:
         warnings.append(f"Could not set title block attributes: {ex}")
+
+
+def fill_general_titleblocks(items: list, project_desc: dict | None = None) -> list:
+    """Fill the title block of each GENERAL sheet (cover / drawing index / symbols legend).
+    These sheets are copied straight from the project template, so without this they keep
+    the template's placeholder DRAWING_NO ('XX.XXXX-G1') and default SHEET.
+
+    `items` is a list of (dwg_path, drawing_no, sheet_number). For each, open the drawing
+    in the running AutoCAD, write the project lines + DRAWING_NO + SHEET (leaving SECTION =
+    'GENERAL' and the DESC label from the template untouched), save and close. Best-effort:
+    returns a list of warning strings and never raises."""
+    warnings = []
+    items = [it for it in (items or []) if it and it[0] and os.path.exists(it[0])]
+    if not items:
+        return warnings
+    base_vals = _project_line_values(project_desc)
+    try:
+        acad_app = None
+        for _ in range(_ACAD_CONNECT_RETRIES):
+            try:
+                acad_app = win32com.client.GetActiveObject("AutoCAD.Application")
+                _ = str(acad_app.Version)
+                break
+            except Exception:
+                acad_app = None
+                time.sleep(2)
+        if acad_app is None:
+            warnings.append("General sheets: AutoCAD not accessible; title blocks left as template.")
+            return warnings
+        _wait_quiescent(acad_app)
+        for path, drawing_no, sheet_number in items:
+            try:
+                _close_if_open(acad_app, path)
+                doc = _com_retry(lambda: acad_app.Documents.Open(path), any_error=True)
+                vals = dict(base_vals)
+                if drawing_no is not None and str(drawing_no).strip():
+                    vals["DRAWING_NO"] = str(drawing_no).strip()
+                if sheet_number is not None and str(sheet_number).strip():
+                    vals["SHEET"] = str(sheet_number).strip()
+                _set_title_block_attrs(doc, vals, warnings)
+                _com_retry(lambda: doc.SaveAs(path))
+                try:
+                    doc.Close(False)
+                except Exception:
+                    pass
+                _log(f"  general title block filled: {os.path.basename(path)} "
+                     f"(DRAWING_NO={drawing_no!r}, SHEET={sheet_number})")
+            except Exception as ex:
+                warnings.append(f"General sheet {os.path.basename(path)}: title block not updated ({ex}).")
+    except Exception as ex:
+        warnings.append(f"General sheets: title-block update failed ({ex}).")
+    return warnings
 
 
 def _insert_block(model, x: float, y: float, block_name: str, warnings: list):

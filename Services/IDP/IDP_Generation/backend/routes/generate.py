@@ -341,6 +341,11 @@ def generate():
         sheet_paths = [output_path if k == 0 else f"{base}-{k + 1}{ext}"
                        for k in range(n_sheets)]
 
+    # Sheet numbering leads with the GENERAL sheets (cover/index/legend) when we're
+    # assembling a full project, so conduit sheet numbers continue after them; otherwise
+    # conduit sheets number from 1.
+    general_offset = wdp_writer.GENERAL_SHEET_COUNT if make_project else 0
+
     out_paths, all_warnings, errors, validations = [], [], [], []
     if _fill_warning:
         all_warnings.append(_fill_warning)   # NEC over-fill notice (non-blocking)
@@ -370,9 +375,13 @@ def generate():
         prev_name = os.path.basename(sheet_paths[k - 1]) if k > 0 else ""
         next_name = os.path.basename(sheet_paths[k + 1]) if k < n_sheets - 1 else ""
 
-        # Each sheet shows its own consecutive number in the title block (15 OF 20,
-        # 16 OF 20, ...) so continuation sheets read as their own drawings.
-        sheet_seq = (int(seq_num) + k) if seq_num is not None else None
+        # DRAWING_NO on the title block = this sheet's own drawing number, i.e. its filename
+        # stem (e.g. 73.1159-15e). SHEET = its running position in the whole deliverable:
+        # the cover/index/legend take 1..GENERAL_SHEET_COUNT, so conduit sheets continue
+        # after them (no restart at 1). general_offset is 0 when not making a project.
+        drawing_no  = os.path.splitext(os.path.basename(sheet_paths[k]))[0]
+        conduit_seq = (int(seq_num) + k) if seq_num is not None else None   # 1-based across conduits + continuations
+        sheet_number = (general_offset + conduit_seq) if conduit_seq is not None else None
 
         r = autocad_bridge.generate_dwg(
             cdata_k, loops_k, sheet_paths[k],
@@ -380,7 +389,7 @@ def generate():
             dev_rows=dev_rows,                  # deviation notes (#→text) on every sheet
             block_heights=block_heights,
             cont_state=state, cont_prev=prev_name, cont_next=next_name,
-            project_desc=project_desc, seq_num=sheet_seq, sheet_max=sheet_max)
+            project_desc=project_desc, sheet_number=sheet_number, drawing_no=drawing_no)
 
         out_paths.append(sheet_paths[k])
         all_warnings += (r.get("warnings") or [])
@@ -433,7 +442,15 @@ def generate():
         if make_project:
             # Full AIC project: copy the GENERAL template sheets (G1-G3) in, then write a
             # sectioned .wdp (GENERAL + INTERCONNECTION DIAGRAMS) and a matching .aepx.
-            wdp_writer.ensure_project_sheets(output_folder, project_number)
+            general = wdp_writer.ensure_project_sheets(output_folder, project_number)
+            # Fill the title block of any GENERAL sheet we just copied (DRAWING_NO like
+            # 73.1159-G1, SHEET 1/2/3, project lines). Only the newly-copied ones, so this
+            # runs once per project rather than on every conduit during Generate All.
+            to_fill = [(os.path.join(output_folder, name), drawing_no, sheet_no)
+                       for (name, sheet_no, drawing_no, newly) in general if newly]
+            if to_fill:
+                result["warnings"] = (result.get("warnings") or []) + \
+                    autocad_bridge.fill_general_titleblocks(to_fill, project_desc)
             result["wdp_path"]  = wdp_writer.write_full_project_wdp(
                 output_folder, project_number, project_info=project_desc,
                 valid_cond_tags=valid_cond_tags)
