@@ -361,6 +361,14 @@ export default function IdpGeneration() {
       if (!proceed) return { skipped: true };
     }
 
+    // NEC conduit-fill notice: if this conduit carries too many wires for its size,
+    // tell the engineer before we generate (non-blocking -- we still generate).
+    const _condRow = wb.conduit_index.find(r => String(r.Cond_Ident) === String(conduitIdent));
+    if (_condRow?.Fill_Warning) {
+      const tsW = new Date().toLocaleTimeString();
+      setGenLog(prev => `[${tsW}] ⚠ ${_condRow.Fill_Warning}` + (prev ? "\n\n" + prev : ""));
+    }
+
     setRowLoading(prev => ({ ...prev, [conduitIdent]: true }));
     setRowResult(prev => ({ ...prev, [conduitIdent]: null }));
 
@@ -379,6 +387,7 @@ export default function IdpGeneration() {
       project_desc:   wb.project_desc || {},
       project_number: projectNumber.trim(),
       seq_num:        seq,
+      sheet_max:      wb.conduit_index.length,   // title block "SHEET n OF <max>"
       file_suffix:    fileSuffix.trim() || "e",
       make_project:   makeProject,
     }, ctrl.signal);
@@ -1091,7 +1100,9 @@ function templateOrdered(templateCols, dataKeys) {
 function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemove, generating, autocadOk, editingCell, onCellClick, onCellCommit }) {
   if (!rows.length) return <p style={{ padding: "16px", color: "var(--text-dim)" }}>No conduit rows found.</p>;
 
-  const displayCols = templateOrdered(CONDUIT_TEMPLATE_COLS, Object.keys(rows[0]));
+  // Fill_Warning is an internal flag (NEC over-fill message), not a data column.
+  const displayCols = templateOrdered(CONDUIT_TEMPLATE_COLS, Object.keys(rows[0]))
+    .filter(c => c !== "Fill_Warning");
 
   return (
     <table style={{ borderCollapse: "collapse", minWidth: "100%", fontSize: "0.8rem" }}>
@@ -1109,9 +1120,16 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
           const ident = row["Cond_Ident"] ?? i;
           const isLoading = rowLoading[ident];
           const result = rowResult[ident];
+          const overfill = row["Fill_Warning"];   // NEC over-fill message, or null
 
           return (
-            <tr key={i} style={{ background: i % 2 === 0 ? "var(--bg-app)" : "var(--bg-row-alt)" }}>
+            <tr key={i}
+              title={overfill || undefined}
+              style={{
+                background: overfill
+                  ? "var(--status-error-soft, #5b1a1a)"
+                  : (i % 2 === 0 ? "var(--bg-app)" : "var(--bg-row-alt)"),
+              }}>
               <td style={{ ...TABLE_CELL, width: "28px", minWidth: "28px", textAlign: "center", padding: "2px 4px" }}>
                 <button
                   onClick={() => onRemove(i)}
@@ -1157,6 +1175,12 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                           {result.warnings?.length > 0 && <span style={{ color: "var(--status-warning)", marginLeft: "4px" }}>⚠</span>}
                         </span>
                       : <span style={{ color: "var(--status-error-soft)", fontSize: "0.72rem" }}>✗ see log</span>
+                  )}
+                  {overfill && (
+                    <span title={overfill}
+                      style={{ color: "var(--status-warning, #e0a000)", fontSize: "0.72rem", fontWeight: 600 }}>
+                      ⚠ too many wires for conduit
+                    </span>
                   )}
                 </div>
               </td>

@@ -378,7 +378,19 @@ def parse_workbook(file_bytes: bytes, filename: str = "workbook.xlsx") -> dict:
         "block_heights": _BLOCK_HEIGHTS,
         "project_desc": project_desc,
     }
-    return workbook_mapper.apply_workbook_mapping(parsed)
+    parsed = workbook_mapper.apply_workbook_mapping(parsed)
+
+    # Flag any conduit carrying more wire than its size allows (NEC Ch.9 fill). Sets
+    # conduit_row['Fill_Warning'] = message | None so the frontend can highlight the
+    # conduit and warn the engineer before generating. Best-effort; never breaks a parse.
+    try:
+        from . import conduit_fill
+        conduit_fill.annotate_conduits(
+            parsed.get("conduit_index", []), parsed.get("fill_index", []))
+    except Exception:
+        pass
+
+    return parsed
 
 
 def _find_header_row(all_rows: list, aliases: dict) -> int:
