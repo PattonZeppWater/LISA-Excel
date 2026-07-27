@@ -375,7 +375,17 @@ export default function IdpGeneration() {
     const ctrl = new AbortController();
     abortMap.current[conduitIdent] = ctrl;
 
-    const seq = (wb.conduit_index.findIndex(r => String(r.Cond_Ident) === String(conduitIdent)) + 1) || 1;
+    // Drawing number: the conduit's project-sequential start (Seq_Start), which the
+    // backend computed so continuation sheets consume consecutive numbers (15e -> 16e ->
+    // 17e) and each conduit starts after the previous one's continuations. Falls back to
+    // position-based numbering for workbooks parsed by an older backend.
+    const _cond = wb.conduit_index.find(r => String(r.Cond_Ident) === String(conduitIdent));
+    const seq = _cond?.Seq_Start
+      ?? ((wb.conduit_index.findIndex(r => String(r.Cond_Ident) === String(conduitIdent)) + 1) || 1);
+    // Title-block "N OF <max>": total SHEETS in the project (conduits + their
+    // continuation sheets), not just the conduit count.
+    const sheetMax = wb.conduit_index.reduce((sum, r) => sum + (r.Sheet_Count || 1), 0)
+      || wb.conduit_index.length;
 
     const result = await generateIdpDwg({
       conduit_ident:  conduitIdent,
@@ -387,7 +397,7 @@ export default function IdpGeneration() {
       project_desc:   wb.project_desc || {},
       project_number: projectNumber.trim(),
       seq_num:        seq,
-      sheet_max:      wb.conduit_index.length,   // title block "SHEET n OF <max>"
+      sheet_max:      sheetMax,   // title block "SHEET n OF <max>"
       file_suffix:    fileSuffix.trim() || "e",
       make_project:   makeProject,
     }, ctrl.signal);
@@ -1100,8 +1110,8 @@ function templateOrdered(templateCols, dataKeys) {
 function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemove, generating, autocadOk, editingCell, onCellClick, onCellCommit }) {
   if (!rows.length) return <p style={{ padding: "16px", color: "var(--text-dim)" }}>No conduit rows found.</p>;
 
-  // Fill_* are internal NEC-fill fields (percent / over-flag / message), not data columns.
-  const _hiddenCols = new Set(["Fill_Warning", "Fill_Pct", "Fill_Over"]);
+  // Internal, backend-computed fields (NEC fill %, sheet numbering), not data columns.
+  const _hiddenCols = new Set(["Fill_Warning", "Fill_Pct", "Fill_Over", "Seq_Start", "Sheet_Count"]);
   const displayCols = templateOrdered(CONDUIT_TEMPLATE_COLS, Object.keys(rows[0]))
     .filter(c => !_hiddenCols.has(c));
 
