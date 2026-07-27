@@ -834,8 +834,8 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
     conduit). For continuation sheets the caller passes:
       cont_state — conduit visibility (TBL10_Continuation_Start / Continuation_Middle
                    / Continuation_End); None for a normal single-sheet conduit.
-      cont_prev / cont_next — adjacent sheet filenames for the CONT_Previous_DWG /
-                   CONT_Next_DWG link attributes.
+      cont_prev / cont_next — adjacent sheet DRAWING NUMBERS (filename stems, no ".dwg")
+                   for the CONT_Previous_DWG / CONT_Next_DWG continuation reference attrs.
       project_desc — the workbook's "Project Description" sheet, as {"lines": [...]}
                    (positionally Owner/Job Title/Content/Proj No/Status/Date/Engineer/
                    Drafter — same shape wdp_writer uses for the .wdp's *[1]..*[8]).

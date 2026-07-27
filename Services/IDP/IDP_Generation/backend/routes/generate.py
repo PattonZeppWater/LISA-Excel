@@ -372,8 +372,11 @@ def generate():
             state = (autocad_bridge.CONT_STATE_END if k == n_sheets - 1
                      else autocad_bridge.CONT_STATE_MIDDLE)
 
-        prev_name = os.path.basename(sheet_paths[k - 1]) if k > 0 else ""
-        next_name = os.path.basename(sheet_paths[k + 1]) if k < n_sheets - 1 else ""
+        # Continuation cross-references show the adjacent sheet's DRAWING NUMBER (its
+        # filename stem, e.g. 73.1159-15e -- no ".dwg"), so the "continued from / continued
+        # on" comment reads as a drawing number, matching the title block's DRAWING_NO.
+        prev_name = os.path.splitext(os.path.basename(sheet_paths[k - 1]))[0] if k > 0 else ""
+        next_name = os.path.splitext(os.path.basename(sheet_paths[k + 1]))[0] if k < n_sheets - 1 else ""
 
         # DRAWING_NO on the title block = this sheet's own drawing number, i.e. its filename
         # stem (e.g. 73.1159-15e). SHEET = its running position in the whole deliverable:
