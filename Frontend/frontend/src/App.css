@@ -70,6 +70,9 @@
   --status-warning: #e6a817;
   --status-red-bright: #ff6666;
   --status-yellow: #cccc00;
+  /* subtle red row tint for NEC over-fill conduits — keeps cell text readable
+     (unlike a saturated fill), while still flagging the row. */
+  --bg-row-error: #3a191c;
 }
 
 :root[data-theme="light"] {
@@ -133,6 +136,7 @@
   --status-warning: #b07d0a;
   --status-red-bright: #e03b3b;
   --status-yellow: #a3a300;
+  --bg-row-error: #fbe4e4;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }

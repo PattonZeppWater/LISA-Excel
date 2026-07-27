@@ -1140,7 +1140,7 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
               title={overfillMsg || undefined}
               style={{
                 background: overfill
-                  ? "var(--status-error-soft, #5b1a1a)"
+                  ? "var(--bg-row-error, #3a191c)"
                   : (i % 2 === 0 ? "var(--bg-app)" : "var(--bg-row-alt)"),
               }}>
               <td style={{ ...TABLE_CELL, width: "28px", minWidth: "28px", textAlign: "center", padding: "2px 4px" }}>
@@ -1194,7 +1194,7 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                       style={{
                         fontSize: "0.72rem",
                         fontWeight: overfill ? 700 : 500,
-                        color: overfill ? "var(--status-error, #ff6b6b)" : "var(--text-dim)",
+                        color: overfill ? "var(--status-red-bright, #ff6666)" : "var(--text-dim)",
                       }}>
                       {overfill ? `⚠ Fill ${fillPct}% — too many wires` : `Fill ${fillPct}%`}
                     </span>
