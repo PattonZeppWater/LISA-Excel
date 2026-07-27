@@ -154,6 +154,11 @@ export default function IdpGeneration() {
   // ── AutoCAD status polling ────────────────────────────────────────────────
 
   const pollAutocad = useCallback(async () => {
+    // The backend runs single-threaded (COM needs one CoInitialized thread), so a status
+    // poll that lands while a generate is in flight collides on the server and can reset
+    // the connection -- surfacing as "Could not reach IDP_Generation" and losing that
+    // conduit. Skip the poll whenever a generation is running (abortMap has live entries).
+    if (Object.keys(abortMap.current).length > 0) return;
     const result = await getIdpAutoCADStatus();
     if (result.ok) setAutocad(result.data);
   }, []);
@@ -369,7 +374,7 @@ export default function IdpGeneration() {
 
     const seq = (wb.conduit_index.findIndex(r => String(r.Cond_Ident) === String(conduitIdent)) + 1) || 1;
 
-    const result = await generateIdpDwg({
+    const payload = {
       conduit_ident:  conduitIdent,
       conduit_index:  wb.conduit_index,
       fill_index:     wb.fill_index,
@@ -381,7 +386,21 @@ export default function IdpGeneration() {
       seq_num:        seq,
       file_suffix:    fileSuffix.trim() || "e",
       make_project:   makeProject,
-    }, ctrl.signal);
+    };
+
+    // Generate, retrying ONCE on a transient "Could not reach" network error (a dropped/
+    // reset connection to the single-threaded backend). Generation is idempotent server-
+    // side (it re-copies the template and overwrites the output), so a retry can't produce
+    // a partial/double drawing. A real server error (non-network) or an abort is NOT
+    // retried.
+    let result;
+    for (let attempt = 0; attempt < 2; attempt++) {
+      result = await generateIdpDwg(payload, ctrl.signal);
+      const transient = !result.ok && !result.aborted &&
+        /could not reach/i.test(result.error || "");
+      if (!transient || stopRef.current) break;
+      await new Promise(res => setTimeout(res, 800));   // brief pause, then one retry
+    }
 
     delete abortMap.current[conduitIdent];
     setRowLoading(prev => ({ ...prev, [conduitIdent]: false }));

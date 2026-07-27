@@ -1299,7 +1299,11 @@ def _normalize_color(value):
 def _set_attrs(block_ref, attr_map: dict, warnings: list):
     """Set block attributes from attr_map (case-insensitive tag matching)."""
     try:
-        attrs = _com_retry(lambda: block_ref.GetAttributes())
+        # any_error=True: right after an insert, GetAttributes can transiently fail with a
+        # dynamic-dispatch error ("InsertBlock.GetAttributes") that isn't a classic busy
+        # HRESULT. It's a read (idempotent), so retrying any transient hiccup is safe and
+        # stops a single blip from dropping EVERY attribute on the block.
+        attrs = _com_retry(lambda: block_ref.GetAttributes(), any_error=True)
     except Exception as e:
         warnings.append(f"GetAttributes() failed: {e}")
         _log(f"  GetAttributes() failed: {e}")
@@ -1338,10 +1342,15 @@ def _set_attrs(block_ref, attr_map: dict, warnings: list):
     _log(f"    keys : {list(upper_map.keys())}")
 
     def _write(att, val):
-        # Retry the actual COM writes -- these are the calls that intermittently hit
-        # "Call was rejected by callee" during a busy Generate All.
-        _com_retry(lambda: setattr(att, "TextString", val))
-        _com_retry(lambda: att.Update())
+        # Retry the actual COM writes on ANY transient error, not just classic "busy"
+        # HRESULTs. During a busy Generate All these also hit transient dynamic-dispatch
+        # errors ("Property 'GetAttributes.TextString' can not be set", "GetAttributes.
+        # Update") that aren't busy HRESULTs -- which is why terminal/description attrs
+        # sometimes came out blank. Writing the same value / calling Update again is
+        # idempotent, so retrying any transient hiccup is safe (a genuinely unsettable
+        # attr still fails after the retries, exactly as before).
+        _com_retry(lambda: setattr(att, "TextString", val), any_error=True)
+        _com_retry(lambda: att.Update(), any_error=True)
 
     assigned = 0
     for att, tag in tagged:
