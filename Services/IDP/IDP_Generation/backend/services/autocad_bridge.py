@@ -940,14 +940,12 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
         # sheet links so the drawing reads as part of a multi-sheet conductor.
         if cont_state:
             plan["conduit"]["visibility"] = cont_state
-            # The CONT_Previous_DWG / CONT_Next_DWG attributes now carry the WHOLE note text
-            # ("CONTINUED FROM PREVIOUS DWG <no.>") on one line -- the block's separate static
-            # labels were removed so the note reads as a single line. Empty when there's no
-            # adjacent sheet, so nothing shows on that end.
-            plan["conduit"]["attrs"]["CONT_Previous_DWG"] = (
-                f"CONTINUED FROM PREVIOUS DWG  {cont_prev}" if cont_prev else "")
-            plan["conduit"]["attrs"]["CONT_Next_DWG"] = (
-                f"CONTINUED ON NEXT DWG  {cont_next}" if cont_next else "")
+            # Write the adjacent sheet's DRAWING NUMBER into the block's continuation field.
+            # The "CONTINUED FROM PREVIOUS DWG" / "CONTINUED ON NEXT DWG" wording is the block's
+            # own (visibility-state) label -- do NOT bake it into the value or edit the block:
+            # it's a dynamic block, and editing its internals corrupts the note (renders blank).
+            plan["conduit"]["attrs"]["CONT_Previous_DWG"] = cont_prev or ""
+            plan["conduit"]["attrs"]["CONT_Next_DWG"]     = cont_next or ""
             _log(f"  continuation sheet: state={cont_state} prev={cont_prev!r} next={cont_next!r}")
         _log(f"  layout plan: {len(plan.get('items', []))} block(s)")
         placed = render_plan(model, plan, warnings)
