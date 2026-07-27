@@ -1100,9 +1100,10 @@ function templateOrdered(templateCols, dataKeys) {
 function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemove, generating, autocadOk, editingCell, onCellClick, onCellCommit }) {
   if (!rows.length) return <p style={{ padding: "16px", color: "var(--text-dim)" }}>No conduit rows found.</p>;
 
-  // Fill_Warning is an internal flag (NEC over-fill message), not a data column.
+  // Fill_* are internal NEC-fill fields (percent / over-flag / message), not data columns.
+  const _hiddenCols = new Set(["Fill_Warning", "Fill_Pct", "Fill_Over"]);
   const displayCols = templateOrdered(CONDUIT_TEMPLATE_COLS, Object.keys(rows[0]))
-    .filter(c => c !== "Fill_Warning");
+    .filter(c => !_hiddenCols.has(c));
 
   return (
     <table style={{ borderCollapse: "collapse", minWidth: "100%", fontSize: "0.8rem" }}>
@@ -1120,11 +1121,13 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
           const ident = row["Cond_Ident"] ?? i;
           const isLoading = rowLoading[ident];
           const result = rowResult[ident];
-          const overfill = row["Fill_Warning"];   // NEC over-fill message, or null
+          const overfill = row["Fill_Over"];       // true when over the NEC limit (dangerous)
+          const overfillMsg = row["Fill_Warning"]; // over-fill explanation, or null
+          const fillPct = row["Fill_Pct"];         // NEC fill %, or null if not evaluable
 
           return (
             <tr key={i}
-              title={overfill || undefined}
+              title={overfillMsg || undefined}
               style={{
                 background: overfill
                   ? "var(--status-error-soft, #5b1a1a)"
@@ -1176,10 +1179,14 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                         </span>
                       : <span style={{ color: "var(--status-error-soft)", fontSize: "0.72rem" }}>✗ see log</span>
                   )}
-                  {overfill && (
-                    <span title={overfill}
-                      style={{ color: "var(--status-warning, #e0a000)", fontSize: "0.72rem", fontWeight: 600 }}>
-                      ⚠ too many wires for conduit
+                  {fillPct != null && (
+                    <span title={overfillMsg || `NEC conduit fill: ${fillPct}% of the conduit's internal area`}
+                      style={{
+                        fontSize: "0.72rem",
+                        fontWeight: overfill ? 700 : 500,
+                        color: overfill ? "var(--status-error, #ff6b6b)" : "var(--text-dim)",
+                      }}>
+                      {overfill ? `⚠ Fill ${fillPct}% — too many wires` : `Fill ${fillPct}%`}
                     </span>
                   )}
                 </div>

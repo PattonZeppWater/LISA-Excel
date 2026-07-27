@@ -1,26 +1,36 @@
 """
 conduit_fill.py — NEC Chapter 9 conduit-fill check.
 
-Flags a conduit that carries more wire than its size should, the way an electrical
-engineer would size it: sum each conductor's cross-sectional area (NEC Ch.9 Table 5)
-and compare against the conduit's allowable fill — a percentage of the conduit's own
-internal area (NEC Ch.9 Table 4), where the percentage comes from NEC Ch.9 Table 1:
+Computes how full a conduit is, the way an electrical engineer would, and flags it only
+when it exceeds the NEC-allowable fill. Each item's cross-sectional area is summed and
+compared against the conduit's allowable fill — a percentage of the conduit's own internal
+area (NEC Ch.9 Table 4) — where the percentage comes from NEC Ch.9 Table 1:
 
-    1 conductor  -> 53%      2 conductors -> 31%      3 or more -> 40%
+    1 conductor/cable  -> 53%     2 -> 31%     3 or more -> 40%
 
-Assumptions (documented on purpose, since the workbook doesn't carry them):
-  * Conductor insulation is THHN/THWN (the standard building-wire insulation for these
-    gauges in conduit). #16 uses the TFFN fixture-wire area (THHN isn't listed below 14).
-  * Multi-conductor cables (TSP / MFG_CABLE / FIBER / CAT-6) don't have a single building-
-    wire gauge, so their conductors are counted by gauge as an approximation — the cable
-    jacket is NOT added, so the estimate runs slightly LOW for cable-heavy conduits. Any
-    conductor with no usable gauge (N/A, pullrope, unknown) is skipped and reported.
+Two kinds of "items" fill a conduit:
+  * Individual insulated conductors (POWER / CONTROL): area from NEC Ch.9 Table 5 by gauge.
+    Each conductor counts individually (Wire_Count of them per row).
+  * Multi-conductor CABLES (TSP / CAT-x / FIBER): NEC (Ch.9, Note to Table 1) treats a
+    cable as a SINGLE conductor sized by its overall outside diameter, area = pi*(OD/2)^2.
+    So each cable row counts as ONE item at its jacket OD, not as its inner conductors.
+
+Assumptions (documented; the workbook doesn't carry them — edit the tables below to tune):
+  * Individual-conductor insulation is THHN/THWN. #16 uses the TFFN fixture-wire area
+    (THHN isn't listed below 14 AWG).
+  * Cable overall diameters (inches), from manufacturer data / typical product:
+      - TSP single shielded pair: #18 = 0.222" (Belden 8760), #16 = 0.313" (Belden 8719).
+      - CAT-5/5e/6/6A: 0.335" (Southwire Cat6A 23AWG/4pr).
+      - FIBER: 0.30" representative (indoor/outdoor distribution; construction-dependent).
+  * MFG_CABLE has no single spec here, so its conductors are approximated individually by
+    gauge (jacket not added — runs slightly low). Any item with no usable gauge/OD (N/A,
+    pullrope, unknown) is skipped and reported.
   * A conduit whose type or trade size isn't in the NEC tables below is NOT flagged
     (can't be evaluated) rather than guessed at.
 
-All values are the published NEC Chapter 9 figures (2011 tables; unchanged in later
-editions for these sizes), verified against the printed tables.
+NEC values are the published Chapter 9 figures, verified against the printed tables.
 """
+import math
 
 # ── NEC Ch.9 Table 5 — approximate area (sq in) of one THHN/THWN conductor by gauge.
 # (#16 = TFFN fixture wire, the standard small-signal conductor; THHN starts at #14.)
@@ -29,6 +39,18 @@ _WIRE_AREA_SQIN = {
     "6": 0.0507, "4": 0.0824, "3": 0.0973, "2": 0.1158, "1": 0.1562,
     "1/0": 0.1855, "2/0": 0.2223, "3/0": 0.2679, "4/0": 0.3237,
 }
+
+# ── Cable overall outside diameters (inches). A cable fills the conduit by its OD area
+# and counts as ONE item (NEC Ch.9). Edit these to match the products actually used.
+_CAT_OD_IN = 0.335    # CAT-5/5e/6/6A (Southwire Cat6A 23AWG/4pr; user-confirmed)
+_FIBER_OD_IN = 0.30   # representative fiber distribution cable (construction-dependent)
+# TSP (single shielded pair) OD by conductor gauge; falls back to _TSP_OD_DEFAULT.
+_TSP_OD_BY_GAUGE_IN = {"18": 0.222, "16": 0.313, "14": 0.35}
+_TSP_OD_DEFAULT_IN = 0.30
+
+
+def _circle_area(od_in: float) -> float:
+    return math.pi * (od_in / 2.0) ** 2
 
 # ── NEC Ch.9 Table 4 — total (100%) internal area (sq in) per conduit type + trade size.
 _CONDUIT_AREA_SQIN = {
@@ -101,68 +123,95 @@ def _norm_gauge(raw):
     return s if s in _WIRE_AREA_SQIN else None
 
 
-def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
-    """Return an over-fill report dict for this conduit, or None if it's within fill
-    (or can't be evaluated). Never raises.
+def _cable_od(wire_type: str, gauge_key):
+    """Overall OD (inches) for a multi-conductor CABLE wire type, or None if this wire
+    type isn't a cable (i.e. it's individual conductors sized by gauge)."""
+    wt = str(wire_type or "").strip().upper()
+    if wt.startswith("CAT"):          # CAT-5 / CAT-6 / CAT6A ...
+        return _CAT_OD_IN
+    if "FIBER" in wt or "FO" == wt:
+        return _FIBER_OD_IN
+    if "TSP" in wt or ("SHIELD" in wt and "PAIR" in wt):
+        return _TSP_OD_BY_GAUGE_IN.get(gauge_key, _TSP_OD_DEFAULT_IN)
+    return None
 
-    Report dict:
-      { conduit, conduit_type, conduit_size, conductors, fill_area, allowed_area,
-        conduit_area, fill_pct, allowed_pct, skipped_conductors, message }
+
+def _item_area(row):
+    """Cross-sectional area (sq in) and item-count this fill row adds to the conduit,
+    the NEC way. Returns (area, count, skipped) where:
+      - a CABLE (TSP/CAT/FIBER) -> (OD-circle area, 1, 0): one item at its jacket OD.
+      - individual conductors    -> (n * gauge area, n, 0).
+      - unusable (no gauge/OD)   -> (0, 0, n): skipped, reported separately."""
+    try:
+        n = int(row.get("Wire_Count") or 0)
+    except (TypeError, ValueError):
+        n = 0
+    if n <= 0:
+        return 0.0, 0, 0
+    gauge = _norm_gauge(row.get("Wire_Size_Raw"))
+    od = _cable_od(row.get("Wire_Type"), gauge)
+    if od is not None:
+        return _circle_area(od), 1, 0        # a cable = one item at its OD
+    if gauge is not None:
+        return n * _WIRE_AREA_SQIN[gauge], n, 0
+    return 0.0, 0, n                          # no gauge and not a known cable -> skip
+
+
+def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
+    """Return the NEC fill report for this conduit, or None only if it CAN'T be evaluated
+    (conduit type/size not in the NEC tables, or nothing to count). Never raises.
+
+    Report dict (always returned when evaluable, over-fill or not):
+      { conduit, conduit_type, conduit_size, items, fill_area, allowed_area, conduit_area,
+        fill_pct, allowed_pct, over (bool), skipped, message (str|None -- set iff over) }
     """
     try:
         ctype = _norm_type(conduit_row.get("Cond_Type"))
         csize = _norm_size(conduit_row.get("Cond_Size"))
         if not ctype or csize not in _CONDUIT_AREA_SQIN.get(ctype, {}):
-            return None   # type/size not in NEC tables -> can't evaluate, don't flag
+            return None   # type/size not in NEC tables -> can't evaluate
         conduit_area = _CONDUIT_AREA_SQIN[ctype][csize]
 
-        conductors = 0
+        items = 0        # NEC "number of conductors" for the fill-% rule (cable counts 1)
         skipped = 0
         fill_area = 0.0
         for r in fill_rows:
-            try:
-                n = int(r.get("Wire_Count") or 0)
-            except (TypeError, ValueError):
-                n = 0
-            if n <= 0:
-                continue
-            g = _norm_gauge(r.get("Wire_Size_Raw"))
-            if g is None:
-                skipped += n
-                continue
-            conductors += n
-            fill_area += n * _WIRE_AREA_SQIN[g]
+            area, cnt, skip = _item_area(r)
+            fill_area += area
+            items += cnt
+            skipped += skip
 
-        if conductors == 0:
-            return None
+        if items == 0:
+            return None   # nothing countable
 
-        allowed_pct = _fill_pct(conductors)
+        allowed_pct = _fill_pct(items)
         allowed_area = conduit_area * allowed_pct
-        if fill_area <= allowed_area + 1e-9:
-            return None
+        used_pct = (fill_area / conduit_area) * 100.0
+        over = fill_area > allowed_area + 1e-9
 
         tag = str(conduit_row.get("Cond_Tag") or "").strip()
-        used_pct = (fill_area / conduit_area) * 100.0
-        msg = (
-            f"Conduit '{tag}' is over NEC fill: {conductors} conductor(s) fill "
-            f"{used_pct:.0f}% of a {csize}\" {ctype} conduit "
-            f"(NEC limit {allowed_pct*100:.0f}% for {conductors} conductors). "
-            f"Use a larger conduit or fewer/smaller wires."
-        )
-        if skipped:
-            msg += (f" Note: {skipped} conductor(s) had no usable gauge "
-                    f"(cable/pullrope/N-A) and weren't counted, so actual fill is higher.")
+        msg = None
+        if over:
+            msg = (
+                f"Conduit '{tag}' is over NEC fill: {items} conductor(s)/cable(s) fill "
+                f"{used_pct:.0f}% of a {csize}\" {ctype} conduit "
+                f"(NEC limit {allowed_pct*100:.0f}%). Use a larger conduit or fewer/smaller wires."
+            )
+            if skipped:
+                msg += (f" Note: {skipped} conductor(s) had no usable gauge/OD "
+                        f"(pullrope/N-A) and weren't counted, so actual fill is higher.")
         return {
             "conduit": tag,
             "conduit_type": ctype,
             "conduit_size": csize,
-            "conductors": conductors,
+            "items": items,
             "conduit_area": round(conduit_area, 4),
             "fill_area": round(fill_area, 4),
             "allowed_area": round(allowed_area, 4),
             "fill_pct": round(used_pct, 1),
             "allowed_pct": round(allowed_pct * 100, 1),
-            "skipped_conductors": skipped,
+            "over": over,
+            "skipped": skipped,
             "message": msg,
         }
     except Exception:
@@ -170,9 +219,12 @@ def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
 
 
 def annotate_conduits(conduit_index: list, fill_index: list) -> None:
-    """Set conduit_row['Fill_Warning'] = message (str) on every over-fill conduit, else
-    None. Mutates conduit_index in place. Never raises. Lets the frontend highlight
-    over-fill conduits and warn before generation."""
+    """Annotate each conduit row with the fill result, in place. Never raises.
+      Fill_Pct     -> number (percent of conduit area filled) or None if not evaluable
+      Fill_Over    -> True when over the NEC limit (the 'dangerous' case), else False
+      Fill_Warning -> the over-fill message (str) or None
+    Lets the frontend show the % next to Generate for every conduit, and highlight/alert
+    only the over-fill ones."""
     try:
         by_tag = {}
         for r in fill_index:
@@ -182,6 +234,13 @@ def annotate_conduits(conduit_index: list, fill_index: list) -> None:
         for c in conduit_index:
             tag = str(c.get("Cond_Tag") or "").strip()
             report = evaluate(c, by_tag.get(tag, [])) if tag else None
-            c["Fill_Warning"] = report["message"] if report else None
+            if report:
+                c["Fill_Pct"] = report["fill_pct"]
+                c["Fill_Over"] = report["over"]
+                c["Fill_Warning"] = report["message"]
+            else:
+                c["Fill_Pct"] = None
+                c["Fill_Over"] = False
+                c["Fill_Warning"] = None
     except Exception:
         pass
