@@ -81,7 +81,18 @@ if __name__ == "__main__":
 
     flask_thread = threading.Thread(target=_run_flask, daemon=True)
     flask_thread.start()
-    time.sleep(1.5)  # let Flask fully start before opening the window
+
+    # Wait until Flask is actually answering before opening the window. A fixed sleep
+    # races cold-start imports (win32com/AutoCAD can push readiness past 1.5s), and the
+    # webview loads the URL only once -- if the server isn't up yet it shows a BLANK
+    # window and never retries. Poll instead so launch is robust on slow/cold starts.
+    import urllib.request
+    for _ in range(80):  # up to ~20s
+        try:
+            urllib.request.urlopen("http://localhost:5000/", timeout=1)
+            break
+        except Exception:
+            time.sleep(0.25)
 
     window = webview.create_window(
         title="LISA — Advanced Integration & Controls",
