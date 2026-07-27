@@ -378,7 +378,60 @@ def parse_workbook(file_bytes: bytes, filename: str = "workbook.xlsx") -> dict:
         "block_heights": _BLOCK_HEIGHTS,
         "project_desc": project_desc,
     }
-    return workbook_mapper.apply_workbook_mapping(parsed)
+    parsed = workbook_mapper.apply_workbook_mapping(parsed)
+
+    # Flag any conduit carrying more wire than its size allows (NEC Ch.9 fill). Sets
+    # conduit_row['Fill_Warning'] = message | None so the frontend can highlight the
+    # conduit and warn the engineer before generating. Best-effort; never breaks a parse.
+    try:
+        from . import conduit_fill
+        conduit_fill.annotate_conduits(
+            parsed.get("conduit_index", []), parsed.get("fill_index", []))
+    except Exception:
+        pass
+
+    # Assign each conduit its project-sequential starting drawing number, accounting for
+    # continuation sheets: a conduit that spans 3 sheets consumes 3 consecutive numbers
+    # (e.g. 15e -> 16e -> 17e) and the next conduit starts at the following free number.
+    # Best-effort; a failure here just leaves the numbers unset and the frontend falls
+    # back to position-based numbering.
+    try:
+        annotate_sheet_numbers(
+            parsed.get("conduit_index", []),
+            parsed.get("fill_index", []),
+            parsed.get("block_heights", {}),
+        )
+    except Exception:
+        pass
+
+    return parsed
+
+
+def annotate_sheet_numbers(conduit_index: list, fill_index: list,
+                           block_heights: dict | None = None) -> int:
+    """Number drawings sheet-sequentially across the whole project. Continuation sheets
+    consume consecutive numbers rather than a '-N' suffix, so a multi-sheet conduit
+    (say sheets 15/16/17) pushes the next conduit to 18. Sets on each conduit row, in
+    place (never raises):
+      Seq_Start   -> 1-based starting drawing number for this conduit's FIRST sheet
+      Sheet_Count -> number of sheets this conduit paginates to (>= 1)
+    Returns the total sheet count for the project (title-block 'N OF <total>').
+    """
+    from . import autocad_bridge   # lazy: keeps the win32com import off the parse path
+    running = 1
+    for c in conduit_index:
+        tag = str(c.get("Cond_Tag") or "").strip()
+        n_sheets = 1
+        if tag:
+            try:
+                loop_list = build_loop_list(get_fill_rows(fill_index, tag))
+                n_sheets = max(1, len(autocad_bridge.paginate_loops(loop_list, block_heights)))
+            except Exception:
+                n_sheets = 1
+        c["Seq_Start"] = running
+        c["Sheet_Count"] = n_sheets
+        running += n_sheets
+    return running - 1
 
 
 def _find_header_row(all_rows: list, aliases: dict) -> int:

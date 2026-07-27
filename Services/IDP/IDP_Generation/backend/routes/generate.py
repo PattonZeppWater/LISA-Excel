@@ -232,6 +232,7 @@ def generate():
     project_desc   = body.get("project_desc", {}) or {}  # Project Description sheet -> .wdp fields
     project_number = str(body.get("project_number") or "").strip()
     seq_num        = body.get("seq_num")
+    sheet_max      = body.get("sheet_max")   # total sheets in the project -> title block "N OF <max>"
     # File suffix appended after the sequence number (default "e", e.g. 56.1077-01e)
     file_suffix    = body.get("file_suffix")
     file_suffix    = "e" if file_suffix is None else str(file_suffix).strip()
@@ -266,6 +267,12 @@ def generate():
 
     fill_rows    = svc_parser.get_fill_rows(fill_index, cond_tag)
     loop_list    = svc_parser.build_loop_list(fill_rows)
+
+    # NEC conduit-fill check: surface an over-fill conduit as a warning in the generation
+    # log too (the frontend also warns before generating). Non-blocking -- notify only.
+    from ..services import conduit_fill
+    _fill_report = conduit_fill.evaluate(conduit_row, fill_rows)
+    _fill_warning = _fill_report["message"] if _fill_report else None
 
     # Re-derive this conduit's Fill## slots from the RAW fill rows so the fill table
     # is always current, even if the frontend's cached conduit_index was parsed by an
@@ -318,11 +325,25 @@ def generate():
     chunks = autocad_bridge.paginate_loops(loop_list, block_heights)
 
     base, ext = os.path.splitext(output_path)          # ext == ".dwg"
-    sheet_paths = [output_path if k == 0 else f"{base}-{k + 1}{ext}"
-                   for k in range(len(chunks))]
     n_sheets = len(chunks)
+    if project_number and seq_num is not None:
+        # Continuation sheets take the NEXT consecutive drawing numbers (e.g. 15e -> 16e
+        # -> 17e), matching standard sheet numbering, instead of a "-N" suffix on the
+        # base name. seq_num is this conduit's project-sequential start (already offset
+        # for earlier conduits' continuations), so sheet k is seq_num + k.
+        sheet_paths = [
+            os.path.join(output_folder,
+                         f"{safe_proj}-{int(seq_num) + k:02d}{safe_suffix}{ext}")
+            for k in range(n_sheets)
+        ]
+    else:
+        # Unnumbered fallback (no project number / seq): keep the "-N" continuation suffix.
+        sheet_paths = [output_path if k == 0 else f"{base}-{k + 1}{ext}"
+                       for k in range(n_sheets)]
 
     out_paths, all_warnings, errors, validations = [], [], [], []
+    if _fill_warning:
+        all_warnings.append(_fill_warning)   # NEC over-fill notice (non-blocking)
     for k, (a, b) in enumerate(chunks):
         loops_k = loop_list[a:b]
 
@@ -349,13 +370,17 @@ def generate():
         prev_name = os.path.basename(sheet_paths[k - 1]) if k > 0 else ""
         next_name = os.path.basename(sheet_paths[k + 1]) if k < n_sheets - 1 else ""
 
+        # Each sheet shows its own consecutive number in the title block (15 OF 20,
+        # 16 OF 20, ...) so continuation sheets read as their own drawings.
+        sheet_seq = (int(seq_num) + k) if seq_num is not None else None
+
         r = autocad_bridge.generate_dwg(
             cdata_k, loops_k, sheet_paths[k],
             ref_doc_rows=ref_doc_rows,          # supporting-docs table on every sheet
             dev_rows=dev_rows,                  # deviation notes (#→text) on every sheet
             block_heights=block_heights,
             cont_state=state, cont_prev=prev_name, cont_next=next_name,
-            project_desc=project_desc, seq_num=seq_num)
+            project_desc=project_desc, seq_num=sheet_seq, sheet_max=sheet_max)
 
         out_paths.append(sheet_paths[k])
         all_warnings += (r.get("warnings") or [])

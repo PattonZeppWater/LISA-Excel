@@ -828,7 +828,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
                  cont_prev: str | None = None,
                  cont_next: str | None = None,
                  project_desc: dict | None = None,
-                 seq_num=None) -> dict:
+                 seq_num=None, sheet_max=None) -> dict:
     """
     Generate one AutoCAD DWG for a single conduit (or one sheet of a multi-sheet
     conduit). For continuation sheets the caller passes:
@@ -953,7 +953,7 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             _log("  ref_docs table: skipped (no ref_doc_rows or dev_rows)")
 
         # ── 8b. Title block ────────────────────────────────────────────────────
-        title_block_values = _build_title_block_values(conduit_data, project_desc, seq_num)
+        title_block_values = _build_title_block_values(conduit_data, project_desc, seq_num, sheet_max)
         if title_block_values:
             _set_title_block_attrs(doc, title_block_values, warnings)
 
@@ -1063,16 +1063,25 @@ def _clear_model_space(model, warnings: list):
         warnings.append(f"Could not clear model space: {ex}")
 
 
-def _build_title_block_values(conduit_data: dict, project_desc: dict | None, seq_num) -> dict:
-    """Map our data onto the title block's own attribute tags, per
-    _Templates/Project/default.wdt's "BLOCK = WML-SI_TITLEBLOCK_SCHEMATIC" section --
-    the same tags AutoCAD Electrical's "Update Title Block" writes to:
-        OWNER/JOB_TITLE/CONTENT/PROJECT_NO/STATUS/DATE/ENGINEER/DRAFTER = LINE1..LINE8
-        DESC1/DESC2/DESC3 = DD1/DD2/DD3 (per-drawing description)
-        SHEET = SHEET (this drawing's project sheet number)
-    Only includes tags we actually have a non-blank value for, so a missing Project
-    Description sheet or conduit field just leaves that attribute at its template
-    default instead of blanking it out."""
+# The section every IDP conduit drawing belongs to (matches the .wdp's ICD subsection).
+_TITLEBLOCK_SECTION = "INTERCONNECTION DIAGRAMS"
+
+
+def _build_title_block_values(conduit_data: dict, project_desc: dict | None,
+                              seq_num, sheet_max=None) -> dict:
+    """Map our data onto the title block's own attribute tags (verified present on
+    WML-SI_TITLEBLOCK_SCHEMATIC), the same tags AutoCAD Electrical's "Update Title Block"
+    writes to:
+        OWNER/JOB_TITLE/CONTENT/PROJECT_NO/STATUS/DATE/ENGINEER/DRAFTER  (project lines)
+        DESC1/DESC2/DESC3   -> per-drawing description (Conduit / Source1 / Dest1 names)
+        SECTION             -> the drawing section ("INTERCONNECTION DIAGRAMS")
+        SHEET               -> this drawing's sheet number, as "N" or "N OF <max>"
+    Only includes tags we have a non-blank value for, so a missing Project Description
+    field just leaves that attribute at its template default instead of blanking it.
+
+    NOTE: this title block has NO Previous/Next-sheet, no P/I/L (IEC code), and no
+    separate sheet-maximum attribute -- so the "of <max>" is folded into the single SHEET
+    attribute (the block shows a static 'SHEET' label + this value)."""
     values = {}
     lines = (project_desc or {}).get("lines") or []
     for tag, idx in (("OWNER", 0), ("JOB_TITLE", 1), ("CONTENT", 2), ("PROJECT_NO", 3),
@@ -1083,8 +1092,12 @@ def _build_title_block_values(conduit_data: dict, project_desc: dict | None, seq
         val = (conduit_data or {}).get(key)
         if str(val or "").strip():
             values[tag] = str(val).strip()
+    values["SECTION"] = _TITLEBLOCK_SECTION
     if seq_num is not None and str(seq_num).strip():
-        values["SHEET"] = str(seq_num).strip()
+        sheet = str(seq_num).strip()
+        if sheet_max is not None and str(sheet_max).strip() and str(sheet_max).strip() != "0":
+            sheet = f"{sheet} OF {str(sheet_max).strip()}"
+        values["SHEET"] = sheet
     return values
 
 
