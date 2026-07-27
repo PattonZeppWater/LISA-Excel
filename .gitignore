@@ -19,3 +19,8 @@ Frontend/frontend/dist/
 # OS / editor noise
 Thumbs.db
 .DS_Store
+
+# AutoCAD side files (auto-backup + drawing locks)
+*.bak
+*.dwl
+*.dwl2
