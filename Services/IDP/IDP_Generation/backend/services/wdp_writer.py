@@ -297,6 +297,7 @@ def ensure_project_sheets(output_folder: str, project_number: str) -> list:
                 newly = True
             if os.path.exists(dst):
                 general.append((dst_name, i, os.path.splitext(dst_name)[0], newly))
+        # (wdl/wdt copy continues below)
         wdl = _find_template_file("*_wdtitle.wdl") or _find_template_file("*.wdl")
         if wdl:
             dst = os.path.join(output_folder, "%s_wdtitle.wdl" % safe)
@@ -310,6 +311,60 @@ def ensure_project_sheets(output_folder: str, project_number: str) -> list:
     except Exception:
         pass
     return general
+
+
+# Sidecar recording which project info the GENERAL sheet title blocks were last filled
+# with, so we fill them ONCE (not on every conduit during Generate All) yet still re-fill
+# when the project number / description changes.
+_GENERAL_TB_MARK = "_idp_general_titleblocks.json"
+
+
+def _general_tb_signature(project_number: str, project_desc, general) -> str:
+    import hashlib
+    lines = (project_desc or {}).get("lines") or []
+    payload = json.dumps(
+        {"pn": project_number or "", "lines": [str(x) for x in lines],
+         "sheets": [(n, s, d) for (n, s, d, _w) in (general or [])]},
+        sort_keys=True,
+    )
+    return hashlib.md5(payload.encode("utf-8")).hexdigest()
+
+
+def general_titleblocks_to_fill(output_folder, project_number, project_desc, general) -> list:
+    """Return [(dwg_path, drawing_no, sheet_number), ...] for the GENERAL sheets whose title
+    blocks still need filling. Returns [] when a marker shows they were already filled with
+    this exact project number + description -- so a Generate-All fills them once, a fresh
+    folder (or a folder whose general sheets predate this feature) fills them now regardless
+    of whether they were copied THIS run, and changing the project info re-fills. Never raises."""
+    try:
+        present = [(os.path.join(output_folder, name), dno, sn)
+                   for (name, sn, dno, _newly) in (general or [])
+                   if os.path.exists(os.path.join(output_folder, name))]
+        if not present:
+            return []
+        sig = _general_tb_signature(project_number, project_desc, general)
+        mark = os.path.join(output_folder, _GENERAL_TB_MARK)
+        if os.path.exists(mark):
+            try:
+                with open(mark, "r", encoding="utf-8") as f:
+                    if json.load(f).get("sig") == sig:
+                        return []
+            except Exception:
+                pass
+        return present
+    except Exception:
+        return []
+
+
+def mark_general_titleblocks_filled(output_folder, project_number, project_desc, general) -> None:
+    """Record that the GENERAL sheet title blocks are now filled for this exact project
+    info, so later conduits in the same run skip the (COM-costly) re-open. Never raises."""
+    try:
+        sig = _general_tb_signature(project_number, project_desc, general)
+        with open(os.path.join(output_folder, _GENERAL_TB_MARK), "w", encoding="utf-8") as f:
+            json.dump({"sig": sig}, f)
+    except Exception:
+        pass
 
 
 def write_full_project_wdp(output_folder: str, project_number: str, project_info=None,

@@ -443,14 +443,18 @@ def generate():
             # Full AIC project: copy the GENERAL template sheets (G1-G3) in, then write a
             # sectioned .wdp (GENERAL + INTERCONNECTION DIAGRAMS) and a matching .aepx.
             general = wdp_writer.ensure_project_sheets(output_folder, project_number)
-            # Fill the title block of any GENERAL sheet we just copied (DRAWING_NO like
-            # 73.1159-G1, SHEET 1/2/3, project lines). Only the newly-copied ones, so this
-            # runs once per project rather than on every conduit during Generate All.
-            to_fill = [(os.path.join(output_folder, name), drawing_no, sheet_no)
-                       for (name, sheet_no, drawing_no, newly) in general if newly]
+            # Fill the GENERAL sheet title blocks (DRAWING_NO 73.1159-G1, SHEET 1/2/3,
+            # project lines). Fills whichever sheets still need it -- including ones that
+            # already existed in the folder from an earlier run -- but a signature marker
+            # keeps it to once per project so Generate All doesn't re-open them per conduit.
+            to_fill = wdp_writer.general_titleblocks_to_fill(
+                output_folder, project_number, project_desc, general)
             if to_fill:
-                result["warnings"] = (result.get("warnings") or []) + \
-                    autocad_bridge.fill_general_titleblocks(to_fill, project_desc)
+                gw = autocad_bridge.fill_general_titleblocks(to_fill, project_desc)
+                result["warnings"] = (result.get("warnings") or []) + gw
+                if not gw:   # only mark done when all sheets filled cleanly (else retry next run)
+                    wdp_writer.mark_general_titleblocks_filled(
+                        output_folder, project_number, project_desc, general)
             result["wdp_path"]  = wdp_writer.write_full_project_wdp(
                 output_folder, project_number, project_info=project_desc,
                 valid_cond_tags=valid_cond_tags)
