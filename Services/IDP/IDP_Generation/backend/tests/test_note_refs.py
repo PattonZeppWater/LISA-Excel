@@ -39,6 +39,20 @@ def test_tsp_drawing_points_to_power_counterpart():
     assert loop.get("ref_dwg") == "73.1111-01s"   # counterpart P100 = index 0 -> seq 1
 
 
+def test_counterpart_number_uses_seq_start_when_present():
+    # Continuation sheets consume consecutive numbers, so a later conduit's real drawing
+    # number (Seq_Start) is higher than its plain position. The REF must follow Seq_Start.
+    ci = [{"Cond_Tag": "P100", "Cond_Ident": 1, "Seq_Start": 1, "Sheet_Count": 2},
+          {"Cond_Tag": "P200", "Cond_Ident": 2, "Seq_Start": 3, "Sheet_Count": 1}]
+    fill = [_row("P100", "D", "Inst_4W_R (Field_4Term)", "POWER", "AIT", "003", "003", "AE"),
+            _row("P200", "D", "Inst_4W_R (Field_4Term)", "TSP",   "AIT", "003", "003", "AE")]
+    loop = _inst_loop("Inst_4W_R", "POWER")
+    nr.annotate_instrument_refs([loop], fill, ci, "73.1111", "s", "P100")
+    assert loop.get("ref_dwg") == "73.1111-03s"   # counterpart P200 Seq_Start=3, not position 2
+    # falls back to 1-based position when Seq_Start is absent (older backend)
+    assert nr.counterpart_dwg_number(_CI, "P200", "73.1111", "s") == "73.1111-02s"
+
+
 def test_non_4w_instrument_gets_no_ref():
     fill = [_row("P100", "D", "CB_R", "POWER", "", "", "", ""),
             _row("P200", "D", "CB_R", "TSP",   "", "", "", "")]

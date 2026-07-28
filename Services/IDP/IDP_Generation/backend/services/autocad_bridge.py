@@ -851,27 +851,23 @@ def _group_entities(model, ents: list, name: str, warnings: list):
         warnings.append(f"note group {name!r} failed (non-fatal): {e}")
 
 
-def _force_terminal_labels_visible(ref, warnings: list) -> None:
-    """Force an instrument's populated terminal-number attributes to be VISIBLE.
+def _force_populated_attrs_visible(ref, warnings: list, pattern: str, label: str) -> None:
+    """Force every attribute of `ref` whose TAG matches `pattern` and that carries a VALUE to
+    be visible, overriding a mis-authored block that hides it in the current visibility state.
 
-    Some instrument symbols in the library are mis-authored: a stale dynamic-block variant
-    hides the 3rd+ terminal-number attributes (Term03, Term04, ...) in the 4-term visibility
-    state. LISA writes the correct value into Term03/Term04, but the block keeps them
-    invisible, so a 4-wire TSP instrument shows only terminals 1 & 2 (3 & 4 blank) even
-    though the values are there. Overriding the attribute's Visible flag after the value is
-    written makes them show, and the override persists through SaveAs (verified).
-
-    Only terminals that actually carry a value are forced visible -- an empty/blanked
-    terminal (including a 'Hide from Generation' one) stays hidden, and a POWER instrument
-    (all numeric terminals blank, feed on L/N) is therefore untouched. Best-effort: any COM
-    failure is logged and skipped, never fatal."""
+    Several library blocks the same author touched share one defect: an attribute holds the
+    right value but its Visible flag is off in the active dynamic-block state, so the value
+    never shows. LISA writes the value, then re-asserts Visible=True here; the override
+    persists through SaveAs (verified). Only attributes that actually carry a value are
+    touched, so empty/blanked slots stay hidden. Best-effort: any COM failure is logged and
+    skipped, never fatal."""
     try:
         if not _com_retry(lambda: ref.HasAttributes, any_error=True):
             return
         for a in _com_retry(lambda: ref.GetAttributes(), any_error=True):
             try:
                 tag = str(_com_retry(lambda: a.TagString, any_error=True) or "")
-                if not re.match(r"^Term\d+$", tag):
+                if not re.match(pattern, tag):
                     continue
                 val = str(_com_retry(lambda: a.TextString, any_error=True) or "").strip()
                 if val and not _com_retry(lambda: a.Visible, any_error=True):
@@ -880,7 +876,15 @@ def _force_terminal_labels_visible(ref, warnings: list) -> None:
             except Exception:
                 continue
     except Exception as e:
-        warnings.append(f"force terminal-label visibility failed (non-fatal): {e}")
+        warnings.append(f"force {label} visibility failed (non-fatal): {e}")
+
+
+def _force_terminal_labels_visible(ref, warnings: list) -> None:
+    """Instrument terminal numbers: a mis-authored symbol hides Term03+ in its 4-term state,
+    so a 4-wire TSP instrument writes terminals 3 & 4 but only shows 1 & 2. Force the
+    populated Term boxes visible (empty ones, incl. 'Hide from Generation', stay hidden; a
+    POWER instrument's all-blank terminals are untouched)."""
+    _force_populated_attrs_visible(ref, warnings, r"^Term\d+$", "terminal-label")
 
 
 def render_plan(model, plan: dict, warnings: list) -> list:
@@ -893,11 +897,21 @@ def render_plan(model, plan: dict, warnings: list) -> list:
     c = plan.get("conduit")
     if c:
         ref = _insert_block(model, c["x"], c["y"], c["name"], warnings)
-        if ref is not None:
-            if c.get("visibility"):                       # continuation sheets set TBL10_Continuation_Start / Middle / End
-                _apply_visibility(ref, c["visibility"], warnings)
-            _set_attrs(ref, c["attrs"], warnings)
-            placed.append(_placed_record("conduit", 0, c, ref))
+        if ref is None:
+            # The Conduit block is the sheet's backbone. If it couldn't be placed -- even
+            # after _insert_block's own busy-retries -- the sheet would be blank/incomplete
+            # (this is the "<unknown>.InsertBlock" transient stall). Raise so _generate_dwg_impl
+            # fails the sheet and generate_dwg re-renders it from a fresh template copy, instead
+            # of saving a broken drawing that reports success.
+            raise RuntimeError("Conduit block could not be placed (AutoCAD busy) — sheet not saved")
+        if c.get("visibility"):                       # continuation sheets set TBL10_Continuation_Start / Middle / End
+            _apply_visibility(ref, c["visibility"], warnings)
+        _set_attrs(ref, c["attrs"], warnings)
+        # The Conduit block hides its CONT_Previous_DWG / CONT_Next_DWG reference in the
+        # continuation visibility state (same mis-authoring as the instrument terminals),
+        # so a populated number wouldn't show. Re-assert visibility on the one(s) we set.
+        _force_populated_attrs_visible(ref, warnings, r"^CONT_(Previous|Next)_DWG$", "continuation-ref")
+        placed.append(_placed_record("conduit", 0, c, ref))
     for idx, it in enumerate(plan.get("items", []), start=1):
         gid = it.get("note_group")
         if it.get("kind") == "mtext":
@@ -1198,25 +1212,17 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
         # sheet links so the drawing reads as part of a multi-sheet conductor.
         if cont_state:
             plan["conduit"]["visibility"] = cont_state
-            # Leave the block's own number fields EMPTY. The dynamic block's visibility state
-            # already draws the "CONTINUED FROM PREVIOUS DWG" / "CONTINUED ON NEXT DWG" label;
-            # we add the adjacent drawing number as its own text right after that label (below)
-            # so the note reads on ONE line -- WITHOUT editing the dynamic block (editing its
-            # internals via COM corrupts the visibility states and blanks the note).
-            plan["conduit"]["attrs"]["CONT_Previous_DWG"] = ""
-            plan["conduit"]["attrs"]["CONT_Next_DWG"]     = ""
+            # Fill the Conduit block's OWN continuation-reference attributes with the adjacent
+            # sheet's drawing number. The dynamic block's visibility state draws the "CONTINUED
+            # FROM PREVIOUS DWG" / "CONTINUED ON NEXT DWG" label; CONT_Previous_DWG /
+            # CONT_Next_DWG supply the number that goes with it. (The old messed-up block hid
+            # these attributes, so an earlier workaround drew the number as separate text
+            # instead; with the block fixed we populate the real attribute.)
+            plan["conduit"]["attrs"]["CONT_Previous_DWG"] = cont_prev or ""
+            plan["conduit"]["attrs"]["CONT_Next_DWG"]     = cont_next or ""
             _log(f"  continuation sheet: state={cont_state} prev={cont_prev!r} next={cont_next!r}")
         _log(f"  layout plan: {len(plan.get('items', []))} block(s)")
         placed = render_plan(model, plan, warnings)
-
-        # One-line continuation note: draw the adjacent DRAWING NUMBER just to the right of the
-        # Conduit block's own label, e.g. "CONTINUED ON NEXT DWG  73.1159-16e". Only for the
-        # note actually shown on this sheet (prev on end/middle, next on start/middle).
-        if cont_state:
-            if cont_prev:
-                _draw_continuation_number(model, "prev", cont_prev, warnings)
-            if cont_next:
-                _draw_continuation_number(model, "next", cont_next, warnings)
 
         # ── 8. Fill supporting documents + deviation-notes table ──────────────
         _log(f"  ref_doc_rows count={len(ref_doc_rows or [])}  dev_rows count={len(dev_rows or [])}")
@@ -1382,58 +1388,76 @@ def _build_title_block_values(conduit_data: dict, project_desc: dict | None,
     return values
 
 
-def _set_title_block_attrs(doc, values: dict, warnings: list) -> None:
-    """Write straight to the title block's (TITLEBLOCK_NAME) own attributes -- no
-    "Update Title Block" command, no dialog, nothing but a direct COM attribute set on
-    the block reference the template already carries. `values` is {attribute tag:
-    text}, built by _build_title_block_values.
+# How many times to re-scan for the title block before giving up. The scan uses raw COM
+# layout/entity enumeration, which on a busy Generate All can transiently fail or come back
+# empty on an otherwise-fine sheet (the "no title block found" false alarm) -- so retry.
+_TB_LOOKUP_TRIES = int(os.getenv("IDP_TB_LOOKUP_TRIES", "4"))
+
+
+def _try_set_title_block_attrs_once(doc, values: dict, warnings: list) -> bool:
+    """One scan for the title block (TITLEBLOCK_NAME) on a paper-space layout; if found, set
+    its attributes and return True. Returns False if no title block turned up this pass. May
+    raise on a COM enumeration error so the caller can retry a transient hiccup.
 
     The title block lives on a PAPER SPACE layout (confirmed live: "Layout1", on layer
-    1_TITLEBLOCK), never in Model Space -- that's standard AutoCAD practice for a sheet
-    border/title block. Searches every non-Model layout's own block (a layout's entities
-    live in ITS OWN block table record, reached via Layout.Block, not ModelSpace)."""
-    try:
-        for layout in doc.Layouts:
+    1_TITLEBLOCK), never in Model Space. A layout's entities live in ITS OWN block table
+    record, reached via Layout.Block (not ModelSpace)."""
+    for layout in doc.Layouts:
+        try:
+            if str(layout.Name).strip().lower() == "model":
+                continue
+            space = layout.Block
+        except Exception:
+            continue
+        for e in space:
             try:
-                if str(layout.Name).strip().lower() == "model":
+                if e.ObjectName != "AcDbBlockReference":
                     continue
-                space = layout.Block
+                bname = str(getattr(e, "EffectiveName", "") or e.Name)
+                if bname.upper() != TITLEBLOCK_NAME.upper():
+                    continue
             except Exception:
                 continue
-            for e in space:
+            attrs = _com_retry(lambda: e.GetAttributes())
+            tags = {}
+            for a in attrs:
                 try:
-                    if e.ObjectName != "AcDbBlockReference":
-                        continue
-                    bname = str(getattr(e, "EffectiveName", "") or e.Name)
-                    if bname.upper() != TITLEBLOCK_NAME.upper():
-                        continue
+                    tags[str(a.TagString).upper()] = a
                 except Exception:
-                    continue
-                try:
-                    attrs = _com_retry(lambda: e.GetAttributes())
-                except Exception as ex:
-                    warnings.append(f"Title block found but could not read its attributes: {ex}")
-                    return
-                tags = {}
-                for a in attrs:
+                    pass
+            set_count = 0
+            for tag, val in values.items():
+                a = tags.get(tag.upper())
+                if a is not None:
                     try:
-                        tags[str(a.TagString).upper()] = a
-                    except Exception:
-                        pass
-                set_count = 0
-                for tag, val in values.items():
-                    a = tags.get(tag.upper())
-                    if a is not None:
-                        try:
-                            a.TextString = val
-                            set_count += 1
-                        except Exception as ex:
-                            warnings.append(f"Could not set title block attribute {tag!r}: {ex}")
-                _log(f"  title block (layout {layout.Name!r}): set {set_count}/{len(values)} attribute(s)")
-                return   # only one title block per sheet
-        warnings.append(f"No '{TITLEBLOCK_NAME}' block found on any layout of this sheet — title block not updated.")
-    except Exception as ex:
-        warnings.append(f"Could not set title block attributes: {ex}")
+                        a.TextString = val
+                        set_count += 1
+                    except Exception as ex:
+                        warnings.append(f"Could not set title block attribute {tag!r}: {ex}")
+            _log(f"  title block (layout {layout.Name!r}): set {set_count}/{len(values)} attribute(s)")
+            return True   # only one title block per sheet
+    return False
+
+
+def _set_title_block_attrs(doc, values: dict, warnings: list) -> None:
+    """Write straight to the title block's own attributes -- no "Update Title Block" command,
+    no dialog, just a direct COM attribute set. `values` is {tag: text}.
+
+    Retries the scan: the raw COM layout/entity enumeration can transiently fail or return
+    empty on a busy Generate All, which used to falsely report 'no title block found' on a
+    sheet that has one. Since the title block is essentially always present, a miss almost
+    always means a transient hiccup -- so re-scan a few times before warning."""
+    for attempt in range(_TB_LOOKUP_TRIES):
+        try:
+            if _try_set_title_block_attrs_once(doc, values, warnings):
+                return
+        except Exception as ex:
+            if attempt == _TB_LOOKUP_TRIES - 1:
+                warnings.append(f"Could not set title block attributes: {ex}")
+                return
+        if attempt < _TB_LOOKUP_TRIES - 1:
+            time.sleep(0.4)
+    warnings.append(f"No '{TITLEBLOCK_NAME}' block found on any layout of this sheet — title block not updated.")
 
 
 def fill_general_titleblocks(items: list, project_desc: dict | None = None) -> list:
@@ -1465,6 +1489,7 @@ def fill_general_titleblocks(items: list, project_desc: dict | None = None) -> l
             return warnings
         _wait_quiescent(acad_app)
         for path, drawing_no, sheet_number in items:
+            doc = None
             try:
                 _close_if_open(acad_app, path)
                 doc = _com_retry(lambda: acad_app.Documents.Open(path), any_error=True)
@@ -1474,15 +1499,25 @@ def fill_general_titleblocks(items: list, project_desc: dict | None = None) -> l
                 if sheet_number is not None and str(sheet_number).strip():
                     vals["SHEET"] = str(sheet_number).strip()
                 _set_title_block_attrs(doc, vals, warnings)
-                _com_retry(lambda: doc.SaveAs(path))
-                try:
-                    doc.Close(False)
-                except Exception:
-                    pass
+                # SaveAs can miss on a transient lock -- OneDrive syncing the sheet just after
+                # it was copied in, the AutoCAD .dwl lock, or AutoCAD momentarily busy. Retry
+                # a few times on ANY error so a transient miss doesn't fail the whole fill
+                # (which leaves the once-per-project marker unset and re-opens these sheets on
+                # every conduit of a Generate All).
+                _com_retry(lambda: doc.SaveAs(path), tries=3, delay=0.5, any_error=True)
                 _log(f"  general title block filled: {os.path.basename(path)} "
                      f"(DRAWING_NO={drawing_no!r}, SHEET={sheet_number})")
             except Exception as ex:
                 warnings.append(f"General sheet {os.path.basename(path)}: title block not updated ({ex}).")
+            finally:
+                # ALWAYS close the sheet, even if the update/save failed. Previously a failed
+                # save left the drawing OPEN and locked in AutoCAD, so a Generate All piled up
+                # dozens of locked general drawings.
+                if doc is not None:
+                    try:
+                        _com_retry(lambda: doc.Close(False), any_error=True)
+                    except Exception:
+                        pass
     except Exception as ex:
         warnings.append(f"General sheets: title-block update failed ({ex}).")
     return warnings
