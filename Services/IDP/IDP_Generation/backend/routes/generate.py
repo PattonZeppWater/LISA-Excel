@@ -26,6 +26,7 @@ from ..services import parser as svc_parser
 from ..services import autocad_bridge
 from ..services import workbook_mapper as svc_mapper
 from ..services import wdp_writer
+from ..services import note_refs as svc_note_refs
 
 idp_gen_bp = Blueprint("idp_gen", __name__)
 
@@ -273,6 +274,13 @@ def generate():
     from ..services import conduit_fill
     _fill_report = conduit_fill.evaluate(conduit_row, fill_rows)
     _fill_warning = _fill_report["message"] if _fill_report else None
+
+    # Cross-conduit REF. DWG notes: for a 4-wire instrument whose power/TSP counterpart
+    # lives in ANOTHER conduit, tag its loop with loop["ref_dwg"] = the counterpart's
+    # drawing number. Purely additive — only 4W-split instruments get a key; every other
+    # drawing is untouched. autocad_bridge places the NOTES flag + callout when present.
+    svc_note_refs.annotate_instrument_refs(
+        loop_list, fill_index, conduit_index, project_number, file_suffix, cond_tag)
 
     # Re-derive this conduit's Fill## slots from the RAW fill rows so the fill table
     # is always current, even if the frontend's cached conduit_index was parsed by an
