@@ -60,19 +60,29 @@ def _loop_is_4w_instrument(loop) -> bool:
 
 
 def counterpart_dwg_number(conduit_index, cond_tag, project_number, file_suffix) -> str:
-    """The drawing NUMBER (no .dwg) a given conduit will be saved as — mirrors the exact
-    filename formula in routes/generate.py so the callout matches the real file. seq =
-    the conduit's 1-based position in conduit_index (same as the frontend computes)."""
-    idx = None
+    """The drawing NUMBER (no .dwg) a given conduit's FIRST sheet is saved as — must match
+    the real filename so the callout points at the right drawing.
+
+    seq = the conduit's project-sequential START number (Seq_Start), which the parser
+    computes so continuation sheets consume consecutive numbers (a multi-sheet conduit at
+    15/16 pushes the next conduit to 17). Using Seq_Start — not the plain 1-based position —
+    is what keeps the REF number correct once any earlier conduit spans multiple sheets.
+    Falls back to position+1 for a conduit_index parsed by an older backend that didn't
+    stamp Seq_Start."""
+    row, idx = None, None
     for j, r in enumerate(conduit_index or []):
         if str(r.get("Cond_Tag") or "").strip() == str(cond_tag).strip():
-            idx = j
+            row, idx = r, j
             break
     project_number = str(project_number or "").strip()
-    if project_number and idx is not None:
+    if project_number and row is not None:
+        try:
+            seq = int(row.get("Seq_Start"))
+        except (TypeError, ValueError):
+            seq = idx + 1
         safe_proj   = "".join(c for c in project_number if c.isalnum() or c in "-_.")
         safe_suffix = "".join(c for c in str(file_suffix or "") if c.isalnum() or c in "-_.")
-        return f"{safe_proj}-{idx + 1:02d}{safe_suffix}"
+        return f"{safe_proj}-{seq:02d}{safe_suffix}"
     return "".join(c for c in str(cond_tag) if c.isalnum() or c in "-_.")
 
 
