@@ -317,13 +317,18 @@ def ensure_project_sheets(output_folder: str, project_number: str) -> list:
 # with, so we fill them ONCE (not on every conduit during Generate All) yet still re-fill
 # when the project number / description changes.
 _GENERAL_TB_MARK = "_idp_general_titleblocks.json"
+# Bump when the fill LOGIC changes so old markers invalidate and the general sheets get
+# re-filled once with the new logic (v2: fill the big center cover text, not just the
+# small title block -- _set_title_block_attrs now sets every attribute of a repeated tag).
+_GENERAL_TB_FILL_VERSION = 2
 
 
 def _general_tb_signature(project_number: str, project_desc, general) -> str:
     import hashlib
     lines = (project_desc or {}).get("lines") or []
     payload = json.dumps(
-        {"pn": project_number or "", "lines": [str(x) for x in lines],
+        {"v": _GENERAL_TB_FILL_VERSION, "pn": project_number or "",
+         "lines": [str(x) for x in lines],
          "sheets": [(n, s, d) for (n, s, d, _w) in (general or [])]},
         sort_keys=True,
     )

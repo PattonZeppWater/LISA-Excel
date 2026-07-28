@@ -1360,22 +1360,25 @@ def _set_title_block_attrs(doc, values: dict, warnings: list) -> None:
                 except Exception as ex:
                     warnings.append(f"Title block found but could not read its attributes: {ex}")
                     return
+                # A tag can appear MORE THAN ONCE in the block (e.g. the cover sheet shows
+                # OWNER/JOB_TITLE/PROJECT_NO/CONTENT both as big center text and again in the
+                # small title block). Collect ALL attribute refs per tag and set every one,
+                # so the center block fills too -- not just the last-seen copy.
                 tags = {}
                 for a in attrs:
                     try:
-                        tags[str(a.TagString).upper()] = a
+                        tags.setdefault(str(a.TagString).upper(), []).append(a)
                     except Exception:
                         pass
                 set_count = 0
                 for tag, val in values.items():
-                    a = tags.get(tag.upper())
-                    if a is not None:
+                    for a in tags.get(tag.upper(), []):
                         try:
                             a.TextString = val
                             set_count += 1
                         except Exception as ex:
                             warnings.append(f"Could not set title block attribute {tag!r}: {ex}")
-                _log(f"  title block (layout {layout.Name!r}): set {set_count}/{len(values)} attribute(s)")
+                _log(f"  title block (layout {layout.Name!r}): set {set_count} attribute(s) for {len(values)} tag(s)")
                 return   # only one title block per sheet
         warnings.append(f"No '{TITLEBLOCK_NAME}' block found on any layout of this sheet — title block not updated.")
     except Exception as ex:

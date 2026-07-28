@@ -7,6 +7,7 @@ import {
   generateIdpDwg,
   downloadIdpWorkbook,
   downloadIdpWireLabels,
+  downloadIdpFillReport,
   downloadIdpTemplate,
   exportIdpConduitList,
 } from "../services/api";
@@ -675,6 +676,25 @@ export default function IdpGeneration() {
     URL.revokeObjectURL(url);
   }
 
+  // ── Conduit fill % report (Excel) ─────────────────────────────────────────
+
+  async function handleFillReport() {
+    if (!wb) return;
+    setLoading("fillreport");
+    const result = await downloadIdpFillReport(wb.conduit_index, wb.fill_index, wb.filename);
+    setLoading(null);
+    if (!result.ok) {
+      setStatus({ type: "error", message: result.error });
+      return;
+    }
+    const url = URL.createObjectURL(result.blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = result.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
   // ── JSON paste / copy ────────────────────────────────────────────────────
 
   function handleCopyJson() {
@@ -992,6 +1012,14 @@ export default function IdpGeneration() {
               title={'Download a CSV of every conduit name with an Enabled/Disabled (1/0) column.\nEdit it in Excel (set 0 to skip a conduit), then re-upload via "Upload conduit list" to generate the enabled ones.'}
             >
               ⬇ Conduit list CSV
+            </button>
+            <button
+              onClick={handleFillReport}
+              disabled={loading === "fillreport"}
+              style={{ background: "none", border: "1px solid var(--border-strong)", color: "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: loading === "fillreport" ? "default" : "pointer", fontSize: "0.75rem" }}
+              title={"Download an Excel report of every conduit's NEC Chapter 9 fill %:\nraw fill % and % of the allowable limit, the conductor/cable breakdown, and which conduits are over-filled."}
+            >
+              {loading === "fillreport" ? "Building…" : "⬇ Fill % report (Excel)"}
             </button>
           </div>
           {jsonPasteOpen && (
