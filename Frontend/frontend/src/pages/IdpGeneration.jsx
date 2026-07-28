@@ -7,6 +7,7 @@ import {
   generateIdpDwg,
   downloadIdpWorkbook,
   downloadIdpWireLabels,
+  exportIdpFillReport,
   downloadIdpTemplate,
   exportIdpConduitList,
 } from "../services/api";
@@ -675,6 +676,28 @@ export default function IdpGeneration() {
     URL.revokeObjectURL(url);
   }
 
+  // ── Conduit fill % report (Excel) ─────────────────────────────────────────
+
+  async function handleFillReport() {
+    if (!wb) return;
+    // A browser blob download doesn't work in the LISA webview, so the backend builds the
+    // .xlsx and pops a native Save-As dialog (defaulting to the output folder).
+    setLoading("fillreport");
+    const result = await exportIdpFillReport({
+      conduit_index: wb.conduit_index,
+      fill_index: wb.fill_index,
+      filename: wb.filename,
+      default_dir: outputFolder || "",
+    });
+    setLoading(null);
+    if (result.cancelled) return;              // user closed the Save dialog — no message
+    if (!result.ok) {
+      setStatus({ type: "error", message: `Fill report failed: ${result.error}` });
+      return;
+    }
+    setStatus({ type: "success", message: `Conduit fill report saved to: ${result.path}` });
+  }
+
   // ── JSON paste / copy ────────────────────────────────────────────────────
 
   function handleCopyJson() {
@@ -993,6 +1016,14 @@ export default function IdpGeneration() {
             >
               ⬇ Conduit list CSV
             </button>
+            <button
+              onClick={handleFillReport}
+              disabled={loading === "fillreport"}
+              style={{ background: "none", border: "1px solid var(--border-strong)", color: "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: loading === "fillreport" ? "default" : "pointer", fontSize: "0.75rem" }}
+              title={"Download an Excel report of every conduit's NEC Chapter 9 fill %:\nraw fill % and % of the allowable limit, the conductor/cable breakdown, and which conduits are over-filled."}
+            >
+              {loading === "fillreport" ? "Building…" : "⬇ Fill % report (Excel)"}
+            </button>
           </div>
           {jsonPasteOpen && (
             <div style={{ display: "flex", flexDirection: "column", gap: "4px", paddingBottom: "4px" }}>
@@ -1130,7 +1161,7 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
   if (!rows.length) return <p style={{ padding: "16px", color: "var(--text-dim)" }}>No conduit rows found.</p>;
 
   // Internal, backend-computed fields (NEC fill %, sheet numbering), not data columns.
-  const _hiddenCols = new Set(["Fill_Warning", "Fill_Pct", "Fill_Of_Limit", "Fill_Over", "Seq_Start", "Sheet_Count"]);
+  const _hiddenCols = new Set(["Fill_Warning", "Fill_Pct", "Fill_Of_Limit", "Fill_Over", "Fill_Assumed_Type", "Seq_Start", "Sheet_Count"]);
   const displayCols = templateOrdered(CONDUIT_TEMPLATE_COLS, Object.keys(rows[0]))
     .filter(c => !_hiddenCols.has(c));
 
@@ -1154,6 +1185,7 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
           const overfillMsg = row["Fill_Warning"]; // over-fill explanation, or null
           const fillPct = row["Fill_Pct"];         // raw NEC fill % (of total conduit area), or null
           const fillOfLimit = row["Fill_Of_Limit"];// same fill as % of the NEC-allowable area (>100 = over)
+          const assumedType = row["Fill_Assumed_Type"]; // conduit type assumed (blank/XXX type), or null
 
           return (
             <tr key={i}
@@ -1210,9 +1242,10 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                       : <span style={{ color: "var(--status-error-soft)", fontSize: "0.72rem" }}>✗ see log</span>
                   )}
                   {fillPct != null && (
-                    <span title={overfillMsg ||
+                    <span title={(overfillMsg ||
                         `NEC conduit fill: ${fillPct}% of the conduit's internal area` +
-                        (fillOfLimit != null ? ` — ${fillOfLimit}% of the NEC-allowable fill` : "")}
+                        (fillOfLimit != null ? ` — ${fillOfLimit}% of the NEC-allowable fill` : "")) +
+                        (assumedType ? `  (conduit type not specified — assumed ${assumedType} for the area)` : "")}
                       style={{
                         fontSize: "0.72rem",
                         fontWeight: overfill ? 700 : 500,
@@ -1220,7 +1253,8 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                       }}>
                       {(overfill ? "⚠ " : "") + `Fill ${fillPct}%` +
                         (fillOfLimit != null ? ` (${fillOfLimit}% of limit)` : "") +
-                        (overfill ? " — over" : "")}
+                        (overfill ? " — over" : "") +
+                        (assumedType ? ` · ${assumedType} assumed` : "")}
                     </span>
                   )}
                 </div>

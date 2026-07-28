@@ -514,6 +514,122 @@ def wire_labels():
         return jsonify({"error": str(e)}), 500
 
 
+# ── Conduit fill % report (Excel) ────────────────────────────────────────────
+
+@idp_gen_bp.route("/fill-report", methods=["POST"])
+def fill_report():
+    """Build an Excel report of every conduit's NEC Chapter 9 fill % and save it via a
+    native Save-As dialog (a browser download doesn't work inside the LISA webview).
+
+    Body: { "conduit_index": [...], "fill_index": [...], "filename": str, "default_dir": str }
+    One row per conduit: raw fill %, % of the NEC-allowable limit, the conductor/cable
+    breakdown, and whether it's over (over-fill rows shaded red).
+    Returns { ok: true, path } | { ok: false, cancelled: true } | { ok: false, error }.
+    """
+    body = request.get_json(silent=True) or {}
+    conduit_index = body.get("conduit_index", [])
+    fill_index = body.get("fill_index", [])
+    stem = os.path.splitext(body.get("filename", "IDP_Workbook.xlsx"))[0]
+    download_name = f"{stem}_ConduitFill.xlsx"
+    try:
+        import openpyxl
+        from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+        from ..services import conduit_fill
+
+        by_tag = {}
+        for r in fill_index:
+            t = str(r.get("Cond_Tag") or "").strip()
+            if t:
+                by_tag.setdefault(t, []).append(r)
+
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.title = "Conduit Fill (NEC Ch.9)"
+        headers = ["Conduit", "Type", "Size", "Type assumed?", "Conductors",
+                   "Cables (by OD)", "Fill area (sq in)", "Conduit area (sq in)",
+                   "Fill %", "NEC limit %", "% of limit", "Over limit?", "Notes"]
+        ws.append(headers)
+        hdr_font = Font(bold=True, color="FFFFFF")
+        hdr_fill = PatternFill("solid", fgColor="1E3A5F")
+        thin = Side(style="thin", color="D0D0D0")
+        border = Border(left=thin, right=thin, top=thin, bottom=thin)
+        for cell in ws[1]:
+            cell.font = hdr_font
+            cell.fill = hdr_fill
+            cell.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            cell.border = border
+        over_fill = PatternFill("solid", fgColor="F4CCCC")   # light red for over rows
+
+        for c in conduit_index:
+            tag = str(c.get("Cond_Tag") or "").strip()
+            rep = conduit_fill.evaluate(c, by_tag.get(tag, [])) if tag else None
+            if rep is None:
+                ws.append([tag, c.get("Cond_Type"), c.get("Cond_Size"), "", "", "",
+                           "", "", "n/a", "", "", "", "Not evaluable (no usable conduit type/size)"])
+                continue
+            notes = []
+            if rep.get("assumed_type"):
+                notes.append(f"type not specified - assumed {rep['conduit_type']}")
+            if rep.get("skipped"):
+                notes.append(f"{rep['skipped']} item(s) skipped (no gauge/OD) - actual fill higher")
+            ws.append([
+                tag, rep["conduit_type"], f"{rep['conduit_size']}\"",
+                "Yes" if rep.get("assumed_type") else "",
+                rep["conductors"], rep["cables"],
+                rep["fill_area"], rep["conduit_area"],
+                rep["fill_pct"] / 100.0, rep["allowed_pct"] / 100.0,
+                (rep["of_limit_pct"] / 100.0) if rep.get("of_limit_pct") is not None else "",
+                "OVER" if rep["over"] else "OK",
+                "; ".join(notes),
+            ])
+            row = ws[ws.max_row]
+            row[8].number_format = "0.0%"     # Fill %
+            row[9].number_format = "0%"       # NEC limit %
+            if isinstance(row[10].value, float):
+                row[10].number_format = "0%"  # % of limit
+            for cell in row:
+                cell.border = border
+            if rep["over"]:
+                for cell in row:
+                    cell.fill = over_fill
+
+        widths = [16, 8, 8, 12, 11, 12, 15, 17, 9, 11, 10, 10, 46]
+        for i, w in enumerate(widths, start=1):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+        ws.freeze_panes = "A2"
+
+        buf = io.BytesIO()
+        wb.save(buf)
+        xl_bytes = buf.getvalue()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    # Save via a native Save-As dialog (browser download doesn't work in the LISA webview).
+    default_dir = body.get("default_dir") or ""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes("-topmost", True)
+        path = filedialog.asksaveasfilename(
+            title="Save Conduit Fill Report",
+            initialfile=download_name,
+            initialdir=default_dir or None,
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+        )
+        root.destroy()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    if not path:
+        return jsonify({"ok": False, "cancelled": True})
+    try:
+        with open(path, "wb") as fh:
+            fh.write(xl_bytes)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not write the file: {e}"}), 500
+    return jsonify({"ok": True, "path": path})
+
+
 # â”€â”€ Download (re-export Excel) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 @idp_gen_bp.route("/download", methods=["POST"])

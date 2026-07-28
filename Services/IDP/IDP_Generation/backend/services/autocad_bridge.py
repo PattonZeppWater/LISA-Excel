@@ -1379,22 +1379,25 @@ def _try_set_title_block_attrs_once(doc, values: dict, warnings: list) -> bool:
             except Exception:
                 continue
             attrs = _com_retry(lambda: e.GetAttributes())
+            # A tag can appear MORE THAN ONCE in the block (e.g. the cover sheet shows
+            # OWNER/JOB_TITLE/PROJECT_NO/CONTENT both as big center text and again in the
+            # small title block). Collect ALL attribute refs per tag and set every one, so
+            # the center block fills too -- not just the last-seen copy.
             tags = {}
             for a in attrs:
                 try:
-                    tags[str(a.TagString).upper()] = a
+                    tags.setdefault(str(a.TagString).upper(), []).append(a)
                 except Exception:
                     pass
             set_count = 0
             for tag, val in values.items():
-                a = tags.get(tag.upper())
-                if a is not None:
+                for a in tags.get(tag.upper(), []):
                     try:
                         a.TextString = val
                         set_count += 1
                     except Exception as ex:
                         warnings.append(f"Could not set title block attribute {tag!r}: {ex}")
-            _log(f"  title block (layout {layout.Name!r}): set {set_count}/{len(values)} attribute(s)")
+            _log(f"  title block (layout {layout.Name!r}): set {set_count} attribute(s) for {len(values)} tag(s)")
             return True   # only one title block per sheet
     return False
 
