@@ -98,3 +98,23 @@ def test_build_note_items_shapes():
     # TSP drawing, R side: bracket above power terminals, rot 180, text bottom-center
     b2, t2 = ab._build_note_items("R", False, 26.5, 12.0, "73.1111-01s")
     assert b2["rotation_deg"] == 180.0 and b2["y"] == 13.25 and t2["attach"] == 8
+
+
+def test_build_note_items_4term_power_centers_and_widens():
+    # A 4-terminal POWER instrument: bracket + text drop to the centre of the 4 stacked
+    # signal terminals (inst_y - 0.25*(4-1) = -0.75) and the span widens to 2.5 to enclose
+    # the taller stack. 2-term stays at -0.25 / 2.0 (the reference geometry).
+    b2, t2 = ab._build_note_items("R", True, 26.5, 12.0, "73.1111-02s", n_terms=2)
+    assert b2["y"] == 11.75 and t2["y"] == 11.75            # inst_y - 0.25
+    assert b2["dyn_props"]["Distance1"] == 2.0
+    b4, t4 = ab._build_note_items("R", True, 26.5, 12.0, "73.1111-02s", n_terms=4)
+    assert b4["y"] == 11.25 and t4["y"] == 11.25            # inst_y - 0.75 (centre of 4 terms)
+    assert b4["dyn_props"]["Distance1"] == 2.5              # 0.5*4 + 0.5
+    assert b4["x"] == 26.0                                  # horizontal offset unchanged
+    # left side keeps its flip + compensated x-offset, just re-centred vertically
+    lb4, lt4 = ab._build_note_items("L", True, 6.5, 12.0, "73.1111-02s", n_terms=4)
+    assert lb4["dyn_props"]["Flip state1"] == 1 and lb4["y"] == 11.25
+    assert lb4["dyn_props"]["Distance1"] == 2.5
+    # the TSP-side note (rot 180) is a fixed 2-terminal bracket regardless of n_terms
+    bt, _ = ab._build_note_items("R", False, 26.5, 12.0, "73.1111-01s", n_terms=4)
+    assert bt["y"] == 13.25 and bt["dyn_props"]["Distance1"] == 2.0

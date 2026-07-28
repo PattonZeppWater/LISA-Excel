@@ -178,8 +178,6 @@ INST_TOP_RESERVE = float(os.getenv("IDP_INST_TOP_RESERVE", "0.75"))
 
 # A TSP/signal instrument group starts too high on the sheet -> drop the whole group.
 TSP_GROUP_DROP = float(os.getenv("IDP_TSP_GROUP_DROP", "1.0"))
-# A generated GND symbol + its wire sit too high -> drop them together by this much.
-GND_DROP = float(os.getenv("IDP_GND_DROP", "1.0"))
 
 # ── Cross-conduit REF. DWG note (yellow bracket + "REF. DWG / <#>" callout) ──────
 # Placed only on a 4-wire instrument whose power/TSP counterpart is in another conduit
@@ -192,6 +190,10 @@ GND_DROP = float(os.getenv("IDP_GND_DROP", "1.0"))
 NOTE_BRACKET = "PWR_Vertical-Bracket_for Description"   # the yellow bracket dynamic block
 NOTE_TEXT_H  = float(os.getenv("IDP_NOTE_TEXT_H", "0.125"))   # REF.DWG MTEXT height
 NOTE_TEXT_W  = float(os.getenv("IDP_NOTE_TEXT_W", "3.0"))     # REF.DWG MTEXT box width
+# Bracket span (Distance1). 2.0 is the 2-terminal reference value. A taller instrument
+# needs a longer bracket to enclose its N stacked signal terminals: span = 0.5*N + 0.5
+# (one 0.5 grid row per terminal + a half-row overhang top & bottom), e.g. 2.5 for a
+# 4-terminal stack. See _build_note_items.
 NOTE_BRACKET_DIST = float(os.getenv("IDP_NOTE_BRACKET_DIST", "2.0"))   # Distance1 (span, 2 terminals)
 
 # (bracket_dx, bracket_dy, rotation_deg, flip, text_dx, text_dy, text_attach) per
@@ -211,19 +213,32 @@ _NOTE_LAYOUT = {
 }
 
 
-def _build_note_items(side: str, is_power: bool, side_x: float, inst_y: float, ref_text: str) -> list:
+def _build_note_items(side: str, is_power: bool, side_x: float, inst_y: float,
+                      ref_text: str, n_terms: int = 2) -> list:
     """Plan items for a cross-conduit note: the yellow bracket (PWR_Vertical-Bracket,
     rotated/flipped to bracket the NOT-here terminals) + the two-line 'REF. DWG / <#>'
     MTEXT (matching the template: "REF. DWG" over the number, \\P = line break). side is
     'R' (dst) or 'L' (src). The two items share a note_group id so render_plan groups them
-    into one AutoCAD group (move the bracket, the text follows). Returns [] if no ref."""
+    into one AutoCAD group (move the bracket, the text follows). Returns [] if no ref.
+
+    n_terms is the instrument's terminal count (from its Field_<N>Term visibility). On a
+    POWER drawing the bracket encloses the un-wired signal (TSP) terminals, which stack DOWN
+    the field-facing edge one 0.5-grid row apart, the topmost at the insertion; N of them
+    centre at inst_y - 0.25*(N-1). The _NOTE_LAYOUT table holds the 2-terminal reference
+    geometry; a taller (e.g. 4-terminal) instrument drops the bracket + text to that lower
+    centre and widens the span to enclose the whole stack. The TSP-side note (rot 180, above
+    the L/N pair) is always a fixed 2-terminal bracket and is left untouched."""
     if not ref_text:
         return []
     bdx, bdy, rot, flip, tdx, tdy, attach = _NOTE_LAYOUT[(bool(is_power), side)]
+    dist = NOTE_BRACKET_DIST
+    if is_power and n_terms and n_terms > 2:
+        bdy = tdy = -0.25 * (n_terms - 1)     # centre on the N stacked signal terminals
+        dist = 0.5 * n_terms + 0.5            # span encloses the taller stack (2.5 for N=4)
     gid = f"{side}{int(round(side_x))}_{int(round(inst_y * 100))}"   # unique per note on the sheet
     bracket = {"role": "note", "name": NOTE_BRACKET, "x": side_x + bdx, "y": inst_y + bdy,
                "visibility": None, "attrs": {}, "kind": "block", "height": 0.0,
-               "rotation_deg": rot, "dyn_props": {"Distance1": NOTE_BRACKET_DIST, "Flip state1": flip},
+               "rotation_deg": rot, "dyn_props": {"Distance1": dist, "Flip state1": flip},
                "note_group": gid}
     text = {"role": "refdwg", "name": None, "x": side_x + tdx, "y": inst_y + tdy,
             "visibility": None, "attrs": {}, "kind": "mtext",
@@ -508,7 +523,8 @@ def build_layout_plan(conduit_data: dict, loop_list: list,
                  _maybe_hide_terms(_build_dst_attrs_group(group), group[0]))
             if is_power:
                 _add("pwrwire", INST_PWR_WIRE_R, RIGHT_X + PWRWIRE_DX, anchor_y + PWRWIRE_DY, None, {})
-            for _ni in _build_note_items("R", is_power, RIGHT_X, inst_y, loop.get("ref_dwg")):
+            for _ni in _build_note_items("R", is_power, RIGHT_X, inst_y, loop.get("ref_dwg"),
+                                         n_terms=(_inst_terminal_capacity(loop) or 2)):
                 _ni["group"] = gidx
                 items.append(_ni)
         elif src_is_inst:
@@ -516,7 +532,8 @@ def build_layout_plan(conduit_data: dict, loop_list: list,
                  _maybe_hide_terms(_build_src_attrs_group(group), group[0]))
             if is_power:
                 _add("pwrwire", INST_PWR_WIRE_L, LEFT_X + PWRWIRE_DX, anchor_y + PWRWIRE_DY, None, {})
-            for _ni in _build_note_items("L", is_power, LEFT_X, inst_y, loop.get("ref_dwg")):
+            for _ni in _build_note_items("L", is_power, LEFT_X, inst_y, loop.get("ref_dwg"),
+                                         n_terms=(_inst_terminal_capacity(loop) or 2)):
                 _ni["group"] = gidx
                 items.append(_ni)
 
@@ -555,11 +572,6 @@ def build_layout_plan(conduit_data: dict, loop_list: list,
             _gblk = str(g.get("src_block") or g.get("dst_block") or "").lower()
             if "htr" in _gblk or "heater" in _gblk:
                 wc = max(2, wc)
-            # A dedicated ground conductor (GND_L/GND_R) sits too high beside the
-            # instrument -> drop the whole ground row (its wire AND both GND symbols) by
-            # GND_DROP so it stays connected but clears the instrument/note.
-            gnd_off = -GND_DROP if ("gnd" in str(g.get("src_block") or "").lower()
-                                    or "gnd" in str(g.get("dst_block") or "").lower()) else 0.0
             # A POWER instrument carries ONLY its L/N power feed (the anchor row) into the
             # conduit; the signal-pair continuation rows stay part of the one instrument
             # symbol but their wires are not drawn -- so a 4W power instrument reads as a
@@ -572,7 +584,7 @@ def build_layout_plan(conduit_data: dict, loop_list: list,
                 ci += 1
                 if _skip_wires:
                     continue
-                wy = gy - (w * 0.5) + gnd_off
+                wy = gy - (w * 0.5)
                 _wattrs = _build_wire_attrs(g, w, color_override=col,
                                             src_label_override=sl, dst_label_override=dl)
                 if g.get("Wire_Type"):
@@ -588,10 +600,10 @@ def build_layout_plan(conduit_data: dict, loop_list: list,
                     _add("dst", g.get("dst_block"), RIGHT_X, wy, g.get("dst_block_visibility"),
                          _maybe_hide_terms(_build_dst_attrs(g), g) if w == 0 else {})
             if not src_is_inst and not src_is_bigtb and not src_is_pullbox and g.get("src_block"):
-                _add("src", g.get("src_block"), LEFT_X, gy + _shld_offset(g.get("src_block")) + gnd_off,
+                _add("src", g.get("src_block"), LEFT_X, gy + _shld_offset(g.get("src_block")),
                      g.get("src_block_visibility"), _maybe_hide_terms(_build_src_attrs(g), g))
             if not dst_is_inst and not dst_is_bigtb and not dst_is_pullbox and g.get("dst_block"):
-                _add("dst", g.get("dst_block"), RIGHT_X, gy + _shld_offset(g.get("dst_block")) + gnd_off,
+                _add("dst", g.get("dst_block"), RIGHT_X, gy + _shld_offset(g.get("dst_block")),
                      g.get("dst_block_visibility"), _maybe_hide_terms(_build_dst_attrs(g), g))
             gy = gy - wc * 0.5
 
@@ -798,6 +810,38 @@ def _group_entities(model, ents: list, name: str, warnings: list):
         warnings.append(f"note group {name!r} failed (non-fatal): {e}")
 
 
+def _force_terminal_labels_visible(ref, warnings: list) -> None:
+    """Force an instrument's populated terminal-number attributes to be VISIBLE.
+
+    Some instrument symbols in the library are mis-authored: a stale dynamic-block variant
+    hides the 3rd+ terminal-number attributes (Term03, Term04, ...) in the 4-term visibility
+    state. LISA writes the correct value into Term03/Term04, but the block keeps them
+    invisible, so a 4-wire TSP instrument shows only terminals 1 & 2 (3 & 4 blank) even
+    though the values are there. Overriding the attribute's Visible flag after the value is
+    written makes them show, and the override persists through SaveAs (verified).
+
+    Only terminals that actually carry a value are forced visible -- an empty/blanked
+    terminal (including a 'Hide from Generation' one) stays hidden, and a POWER instrument
+    (all numeric terminals blank, feed on L/N) is therefore untouched. Best-effort: any COM
+    failure is logged and skipped, never fatal."""
+    try:
+        if not _com_retry(lambda: ref.HasAttributes, any_error=True):
+            return
+        for a in _com_retry(lambda: ref.GetAttributes(), any_error=True):
+            try:
+                tag = str(_com_retry(lambda: a.TagString, any_error=True) or "")
+                if not re.match(r"^Term\d+$", tag):
+                    continue
+                val = str(_com_retry(lambda: a.TextString, any_error=True) or "").strip()
+                if val and not _com_retry(lambda: a.Visible, any_error=True):
+                    _com_retry(lambda: setattr(a, "Visible", True), any_error=True)
+                    _com_retry(lambda: a.Update(), any_error=True)
+            except Exception:
+                continue
+    except Exception as e:
+        warnings.append(f"force terminal-label visibility failed (non-fatal): {e}")
+
+
 def render_plan(model, plan: dict, warnings: list) -> list:
     """Execute a layout plan against AutoCAD model space — the only COM-coupled
     part of generation. Returns the list of blocks actually placed (with each
@@ -833,6 +877,8 @@ def render_plan(model, plan: dict, warnings: list) -> list:
         if it.get("visibility"):
             _apply_visibility(ref, it["visibility"], warnings)
         _set_attrs(ref, it["attrs"], warnings)
+        if it.get("role") == "instrument":
+            _force_terminal_labels_visible(ref, warnings)
         if gid:
             note_groups.setdefault(gid, []).append(ref)
         placed.append(_placed_record(it["role"], idx, it, ref))
@@ -1868,14 +1914,26 @@ def _renumber_inst_terms(attrs: dict, loop: dict, side: str) -> dict:
             attrs[f"Term{n:02d}"] = ""
         return attrs
 
-    # 4-term (and any other) instrument: blank every numeric terminal box so none shows
-    # the block's "XX" placeholder or a sequential number.
+    # 4-term (and any other) instrument. Whether the numeric terminal boxes show depends on
+    # WHAT lands on this drawing:
+    #   * POWER drawing  -> the signal (TSP) terminals are NOT wired here, so blank every
+    #     numeric box (no "XX" placeholder / stray number); the feed shows on L / N.
+    #   * TSP/signal drawing -> the signal wires DO land on the numeric terminals, so
+    #     populate them with their terminal numbers (blank only the unused boxes).
+    # This is the asymmetry the user wants: a terminal shows its number when a TSP wire
+    # connects to it, and is blanked only when power is being shown going to the block. A
+    # hide sentinel is left in place for _maybe_hide_terms to blank afterwards.
+    is_power = str(loop.get("Wire_Type") or "").strip().upper() == "POWER"
     for n in range(1, 9):
-        attrs[f"Term{n}"] = ""
-        attrs[f"Term{n:02d}"] = ""
-    # Powered L / N boxes: always overwrite the block's "L/+" / "N/-" default.
+        v = "" if (is_power or n > 4) else loop.get(tkey.format(n=n))
+        v = "" if v is None else v          # never write the literal "None"
+        attrs[f"Term{n}"] = v
+        attrs[f"Term{n:02d}"] = v
+    # Powered L / N boxes: always overwrite the block's "L/+" / "N/-" default. Only a POWER
+    # drawing carries the feed, so its Wire1/Wire2 terminal values (e.g. "L" / "N") show;
+    # a TSP drawing leaves the default L / N labels.
     t1 = t2 = None
-    if str(loop.get("Wire_Type") or "").strip().upper() == "POWER":
+    if is_power:
         t1 = loop.get(tkey.format(n=1))
         t2 = loop.get(tkey.format(n=2))
     attrs["LinePlus"] = t1 if (t1 not in (None, "") and t1 != _HIDE_TERM_SENTINEL) else "L"
@@ -1975,19 +2033,47 @@ def _group_terms(group: list, side: str) -> list:
     return terms
 
 
+def _fill_group_inst_terms(attrs: dict, group: list, side: str) -> dict:
+    """Populate a multi-term instrument's signal-terminal boxes from the WHOLE group.
+
+    A 4-term (or larger) instrument's terminals continue across the group's continuation
+    rows -- in the workbook, a 4-term instrument stamps an extra row under the anchor whose
+    terminals continue the numbering (row0 -> Term 1/2, row1 -> Term 3/4). _build_*_attrs
+    only sees the anchor row (group[0]), so on a TSP/signal drawing it would show only the
+    first two terminals; gather the whole group's terminal numbers here so all of them show.
+
+    Only applies to a non-2W instrument on a TSP/signal drawing: a POWER drawing keeps the
+    numeric boxes blank (the feed shows on L/N -- handled in _renumber_inst_terms), and a
+    2-wire instrument has exactly Term01/Term02 (already set). A hide sentinel is left in
+    place for _maybe_hide_terms."""
+    loop0 = group[0]
+    blk = str(loop0.get("src_block" if side == "src" else "dst_block") or "").lower()
+    if "inst" not in blk or "2w" in blk:
+        return attrs
+    if str(loop0.get("Wire_Type") or "").strip().upper() == "POWER":
+        return attrs
+    terms = _group_terms(group, side)
+    for i in range(8):
+        v = terms[i] if i < len(terms) else ""
+        attrs[f"Term{i + 1}"] = v
+        attrs[f"Term{i + 1:02d}"] = v
+    return attrs
+
+
 def _build_src_attrs_group(group: list) -> dict:
     """Source-side attrs for a single instrument spanning the whole group. Terminal-box
-    handling (blank for 4-term, Term01/02 filled for 2-wire) is done by _renumber_inst_terms
-    inside _build_src_attrs -- don't re-blank here, or a 2-wire instrument's Term01/02 would
-    be wiped back out."""
-    return _build_src_attrs(group[0])
+    handling (blank for 4-term POWER, Term01/02 filled for 2-wire) is done by
+    _renumber_inst_terms inside _build_src_attrs; _fill_group_inst_terms then continues the
+    TSP terminals across the group's continuation rows so a 4-term signal instrument shows
+    all its terminals, not just the anchor row's two."""
+    return _fill_group_inst_terms(_build_src_attrs(group[0]), group, "src")
 
 
 def _build_dst_attrs_group(group: list) -> dict:
     """Destination-side attrs for a single instrument spanning the whole group. Terminal-box
-    handling is done by _renumber_inst_terms inside _build_dst_attrs -- don't re-blank here,
-    or a 2-wire instrument's Term01/02 would be wiped back out."""
-    return _build_dst_attrs(group[0])
+    handling is done by _renumber_inst_terms inside _build_dst_attrs; _fill_group_inst_terms
+    then continues the TSP terminals across the group's continuation rows."""
+    return _fill_group_inst_terms(_build_dst_attrs(group[0]), group, "dst")
 
 
 def _build_side_group_tb(group: list, side: str) -> dict:

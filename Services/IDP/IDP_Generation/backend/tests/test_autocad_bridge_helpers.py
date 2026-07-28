@@ -34,6 +34,52 @@ def test_maybe_hide_terms_blanks_sentinel_preserves_slots():
     assert out["Term03"] == "9"
 
 
+# ── 4-term instrument: TSP terminals populate, power terminals blank ─────────
+
+def test_inst_terms_populate_on_tsp_blank_on_power():
+    # A 4-wire instrument's numeric terminal boxes show their terminal numbers on a TSP
+    # (signal) drawing and are blanked on a POWER drawing (feed shows on L / N instead).
+    tsp = ab._build_dst_attrs({
+        "dst_block": "Inst_Sensor_4W_R", "Wire_Type": "TSP",
+        "Wire1_DstTermNum": "1", "Wire2_DstTermNum": "2",
+    })
+    assert tsp["Term01"] == "1" and tsp["Term02"] == "2"   # signal terminals populate
+    assert tsp["Term03"] == "" and tsp["Term05"] == ""      # unused boxes blank
+    pwr = ab._build_dst_attrs({
+        "dst_block": "Inst_Sensor_4W_R", "Wire_Type": "POWER",
+        "Wire1_DstTermNum": "L", "Wire2_DstTermNum": "N",
+    })
+    assert pwr["Term01"] == "" and pwr["Term02"] == ""      # blanked when power is shown
+    assert pwr["LinePlus"] == "L" and pwr["NeutralMinus"] == "N"
+    # a hidden TSP terminal still blanks via the sentinel handoff to _maybe_hide_terms
+    hid = ab._maybe_hide_terms(ab._build_dst_attrs({
+        "dst_block": "Inst_Sensor_4W_R", "Wire_Type": "TSP",
+        "Wire1_DstTermNum": "1", "Wire2_DstTermNum": ab._HIDE_TERM_SENTINEL,
+    }), {})
+    assert hid["Term01"] == "1" and hid["Term02"] == ""
+
+
+def test_group_inst_terms_continue_across_continuation_rows():
+    # A 4-term TSP instrument spans an anchor row (terms 1/2) + a continuation row (terms
+    # 3/4); the whole group's terminals must show, not just the anchor's two.
+    group = [
+        {"dst_block": "Inst_Sensor_4W_R", "Wire_Type": "TSP",
+         "Wire1_DstTermNum": "1", "Wire2_DstTermNum": "2"},
+        {"dst_block": "Inst_Sensor_4W_R", "Wire_Type": "TSP", "is_continuation": True,
+         "Wire1_DstTermNum": "3", "Wire2_DstTermNum": "4"},
+    ]
+    a = ab._build_dst_attrs_group(group)
+    assert [a["Term01"], a["Term02"], a["Term03"], a["Term04"]] == ["1", "2", "3", "4"]
+    assert a["Term05"] == ""                                   # unused boxes stay blank
+    # a POWER 4-term instrument's boxes stay blank across the group (feed shows on L/N)
+    pgroup = [
+        {"dst_block": "Inst_4W_R", "Wire_Type": "POWER",
+         "Wire1_DstTermNum": "L", "Wire2_DstTermNum": "N"},
+    ]
+    p = ab._build_dst_attrs_group(pgroup)
+    assert p["Term01"] == "" and p["Term02"] == "" and p["LinePlus"] == "L"
+
+
 # ── tag attrs blank unused slots (clears block default placeholder) ──────────
 
 def test_build_dst_attrs_blanks_unused_tags():
