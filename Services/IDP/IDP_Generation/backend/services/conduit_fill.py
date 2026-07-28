@@ -17,11 +17,15 @@ TWO KINDS OF ITEM
   * Individual insulated conductors (POWER / CONTROL / GROUND): area from Table 5 by gauge;
     each counts as one conductor (Wire_Count per row). The equipment grounding conductor
     counts toward fill like any other conductor.
-  * Multi-conductor CABLES (TSP / CAT-x / FIBER): per NEC Ch.9 Table 1, Note 9, a cable of
+  * Multi-conductor CABLES (a real jacketed cable): per NEC Ch.9 Table 1, Note 9, a cable of
     two or more conductors is treated as a SINGLE conductor whose area is a circle of the
     cable's OVERALL outside diameter, area = pi*(OD/2)^2 (for an elliptical jacket, Note 9
     uses the MAJOR diameter). So each cable counts as ONE item at its jacket OD — never its
-    inner conductors, and never OD + inner conductors.
+    inner conductors, and never OD + inner conductors. CAT-x and FIBER are always jacketed
+    cables. A twisted pair is a jacketed cable ONLY when it's actually SHIELDED (a real TSP);
+    an UNSHIELDED pair (e.g. a DI/DO conductor pair entered as "TSP") is NOT a cable — it's
+    two individual conductors, counted by gauge. Shield is detected from the workbook's own
+    markers (a SHLD drain terminal / a '...-Shld...' terminal block); see _is_shielded.
 
 CABLE DIAMETERS — the one real assumption
   Note 9 says cable OD comes from the MANUFACTURER's spec, not an NEC table, because jacket
@@ -140,15 +144,33 @@ def _norm_gauge(raw):
     return s if s in _WIRE_AREA_SQIN else None
 
 
-def _cable_od(wire_type: str, gauge_key):
-    """Overall OD (inches) for a multi-conductor CABLE wire type, or None if this wire
-    type isn't a cable (i.e. it's individual conductors sized by gauge)."""
+def _is_shielded(row) -> bool:
+    """True if this fill row is an actually-shielded pair — i.e. a real jacketed TSP cable
+    — vs an unshielded 'pair' that is just two individual conductors. Detected from the
+    workbook's own shield markers: a 'SHLD' drain terminal, or a shielded terminal block
+    ('...-Shld...'). A genuine TSP run carries these; a plain DI/DO conductor pair doesn't."""
+    for n in (1, 2, 3, 4):
+        for side in ("Src", "Dst"):
+            if str(row.get(f"Wire{n}_{side}TermNum") or "").strip().upper() == "SHLD":
+                return True
+    for n in (1, 2, 3, 4):
+        for side in ("Src", "Dst"):
+            if "SHLD" in str(row.get(f"Wire{n}_{side}TermBlk") or "").upper():
+                return True
+    return False
+
+
+def _cable_od(wire_type: str, gauge_key, shielded: bool):
+    """Overall OD (inches) if this row is a JACKETED multi-conductor cable — counted as one
+    conductor by its OD (NEC Ch.9 Table 1 Note 9) — else None (count its conductors by gauge).
+    CAT-x and FIBER are always jacketed cables. A twisted pair (TSP) fills as a jacketed cable
+    ONLY when it's actually SHIELDED; an unshielded pair is two individual conductors."""
     wt = str(wire_type or "").strip().upper()
     if wt.startswith("CAT"):          # CAT-5 / CAT-6 / CAT6A ...
         return _CAT_OD_IN
     if "FIBER" in wt or "FO" == wt:
         return _FIBER_OD_IN
-    if "TSP" in wt or ("SHIELD" in wt and "PAIR" in wt):
+    if ("TSP" in wt or ("SHIELD" in wt and "PAIR" in wt)) and shielded:
         return _TSP_OD_BY_GAUGE_IN.get(gauge_key, _TSP_OD_DEFAULT_IN)
     return None
 
@@ -167,11 +189,11 @@ def _item_area(row):
     if n <= 0:
         return 0.0, 0, 0, None, None
     gauge = _norm_gauge(row.get("Wire_Size_Raw"))
-    od = _cable_od(row.get("Wire_Type"), gauge)
+    od = _cable_od(row.get("Wire_Type"), gauge, _is_shielded(row))
     if od is not None:
-        return _circle_area(od), 1, 0, "cable", od       # a cable = one item at its OD
+        return _circle_area(od), 1, 0, "cable", od       # a jacketed cable = one item at its OD
     if gauge is not None:
-        return n * _WIRE_AREA_SQIN[gauge], n, 0, "conductor", gauge
+        return n * _WIRE_AREA_SQIN[gauge], n, 0, "conductor", gauge   # individual conductors
     return 0.0, 0, n, None, None                          # not a known cable, no gauge -> skip
 
 
