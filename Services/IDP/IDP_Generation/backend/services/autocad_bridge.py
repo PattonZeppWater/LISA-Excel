@@ -212,47 +212,6 @@ def _pt(x: float, y: float, z: float = 0.0):
     )
 
 
-# The continuation labels live inside the (dynamic) Conduit block, centered at these WCS
-# points (the block inserts at the origin), height/layer as in the template. We can't edit
-# the dynamic block, so we draw the drawing number as its own text just right of the label.
-_CONT_LABELS = {
-    "prev": ("CONTINUED FROM PREVIOUS DWG", 16.5, 14.750, 0.10, "0"),
-    "next": ("CONTINUED ON NEXT DWG",       16.5,  2.594, 0.10, "0"),
-}
-_ACALIGN_MIDDLE_LEFT = 9   # acAlignmentMiddleLeft
-
-
-def _draw_continuation_number(model, which: str, number: str, warnings: list) -> None:
-    """Draw the adjacent drawing NUMBER as its own text immediately to the right of the
-    Conduit block's continuation label, so 'CONTINUED ON NEXT DWG' + number read on one
-    line. Additive only (never edits the dynamic block). Best-effort; never raises."""
-    try:
-        label, cx, cy, h, layer = _CONT_LABELS[which]
-        # measure the label's rendered width so we know where it ends (it's centered on cx)
-        width = 0.075 * len(label)
-        try:
-            tmp = model.AddText(label, _pt(0.0, 0.0), h)
-            bb = tmp.GetBoundingBox()          # (minPoint, maxPoint)
-            width = float(bb[1][0]) - float(bb[0][0])
-            tmp.Delete()
-        except Exception:
-            pass
-        nx = cx + width / 2.0 + 0.15           # just past the centered label's right edge
-        t = _com_retry(lambda: model.AddText(str(number), _pt(nx, cy), h))
-        try:
-            t.Alignment = _ACALIGN_MIDDLE_LEFT
-            t.TextAlignmentPoint = _pt(nx, cy)  # vertical middle aligns with the label
-        except Exception:
-            pass
-        try:
-            t.Layer = layer
-        except Exception:
-            pass
-        _log(f"  continuation number ({which}) '{number}' drawn at ({nx:.2f},{cy:.2f})")
-    except Exception as ex:
-        warnings.append(f"continuation number ({which}): {ex}")
-
-
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 # AutoCAD COM is a single shared instance; concurrent generate_dwg calls would
@@ -875,8 +834,8 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
     conduit). For continuation sheets the caller passes:
       cont_state — conduit visibility (TBL10_Continuation_Start / Continuation_Middle
                    / Continuation_End); None for a normal single-sheet conduit.
-      cont_prev / cont_next — adjacent sheet DRAWING NUMBERS (filename stems, no ".dwg")
-                   for the CONT_Previous_DWG / CONT_Next_DWG continuation reference attrs.
+      cont_prev / cont_next — adjacent sheet drawing numbers (informational / logged only;
+                   the continuation drawing-number references are handled outside this tool).
       project_desc — the workbook's "Project Description" sheet, as {"lines": [...]}
                    (positionally Owner/Job Title/Content/Proj No/Status/Date/Engineer/
                    Drafter — same shape wdp_writer uses for the .wdp's *[1]..*[8]).
@@ -980,26 +939,13 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
         # Continuation: set the conduit table's visibility state and the prev/next
         # sheet links so the drawing reads as part of a multi-sheet conductor.
         if cont_state:
+            # Set the block's visibility state so the correct continuation note shows. The
+            # drawing-number references themselves are handled outside this tool (not inserted
+            # here), so we don't write CONT_Previous_DWG / CONT_Next_DWG or add any number text.
             plan["conduit"]["visibility"] = cont_state
-            # Leave the block's own number fields EMPTY. The dynamic block's visibility state
-            # already draws the "CONTINUED FROM PREVIOUS DWG" / "CONTINUED ON NEXT DWG" label;
-            # we add the adjacent drawing number as its own text right after that label (below)
-            # so the note reads on ONE line -- WITHOUT editing the dynamic block (editing its
-            # internals via COM corrupts the visibility states and blanks the note).
-            plan["conduit"]["attrs"]["CONT_Previous_DWG"] = ""
-            plan["conduit"]["attrs"]["CONT_Next_DWG"]     = ""
             _log(f"  continuation sheet: state={cont_state} prev={cont_prev!r} next={cont_next!r}")
         _log(f"  layout plan: {len(plan.get('items', []))} block(s)")
         placed = render_plan(model, plan, warnings)
-
-        # One-line continuation note: draw the adjacent DRAWING NUMBER just to the right of the
-        # Conduit block's own label, e.g. "CONTINUED ON NEXT DWG  73.1159-16e". Only for the
-        # note actually shown on this sheet (prev on end/middle, next on start/middle).
-        if cont_state:
-            if cont_prev:
-                _draw_continuation_number(model, "prev", cont_prev, warnings)
-            if cont_next:
-                _draw_continuation_number(model, "next", cont_next, warnings)
 
         # ── 8. Fill supporting documents + deviation-notes table ──────────────
         _log(f"  ref_doc_rows count={len(ref_doc_rows or [])}  dev_rows count={len(dev_rows or [])}")
