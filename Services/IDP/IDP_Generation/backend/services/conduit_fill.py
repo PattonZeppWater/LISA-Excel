@@ -97,6 +97,12 @@ _CONDUIT_AREA_SQIN = {
     },
 }
 
+# Conduit type assumed when the workbook leaves the type blank / placeholder ("XXX") but a
+# real trade SIZE is given, so the fill still calculates. RMC is the workbook's common type
+# and mid-range in area; change this to re-base the assumption (areas differ only slightly
+# across metal-conduit types at a given size).
+_DEFAULT_TYPE = "RMC"
+
 
 def _fill_pct(n_conductors: int) -> float:
     """NEC Ch.9 Table 1 allowable fill fraction by conductor count."""
@@ -212,8 +218,14 @@ def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
     try:
         ctype = _norm_type(conduit_row.get("Cond_Type"))
         csize = _norm_size(conduit_row.get("Cond_Size"))
-        if not ctype or csize not in _CONDUIT_AREA_SQIN.get(ctype, {}):
-            return None   # type/size not in NEC tables -> can't evaluate
+        assumed_type = False
+        if ctype and csize in _CONDUIT_AREA_SQIN.get(ctype, {}):
+            pass                                     # real type + size, use as given
+        elif csize in _CONDUIT_AREA_SQIN[_DEFAULT_TYPE]:
+            ctype = _DEFAULT_TYPE                     # type blank/XXX but a real trade size ->
+            assumed_type = True                       # assume the default type and calc anyway
+        else:
+            return None   # no usable trade size -> genuinely can't evaluate
         conduit_area = _CONDUIT_AREA_SQIN[ctype][csize]
 
         items = 0        # NEC "number of conductors" for the fill-% rule (a cable counts 1)
@@ -265,10 +277,14 @@ def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
             if skipped:
                 msg += (f" {skipped} item(s) had no usable gauge/OD (pull rope/N-A) and "
                         f"weren't counted, so actual fill is higher.")
+            if assumed_type:
+                msg += (f" Conduit type wasn't specified, so a {_DEFAULT_TYPE} conduit was "
+                        f"assumed for the area at this {csize}\" trade size.")
         return {
             "conduit": tag,
             "conduit_type": ctype,
             "conduit_size": csize,
+            "assumed_type": assumed_type,
             "items": items,
             "cables": cables,
             "conductors": conductors,
@@ -292,6 +308,8 @@ def annotate_conduits(conduit_index: list, fill_index: list) -> None:
       Fill_Of_Limit -> that same fill as a percent of the NEC-allowable area (>100% = over)
       Fill_Over     -> True when over the NEC limit (the 'dangerous' case), else False
       Fill_Warning  -> the over-fill message (str) or None
+      Fill_Assumed_Type -> conduit type assumed for the area when the workbook left the type
+                           blank/XXX (e.g. 'RMC'), or None when the real type was used
     Lets the frontend show the % next to Generate for every conduit, and highlight/alert
     only the over-fill ones."""
     try:
@@ -308,10 +326,13 @@ def annotate_conduits(conduit_index: list, fill_index: list) -> None:
                 c["Fill_Of_Limit"] = report["of_limit_pct"]
                 c["Fill_Over"] = report["over"]
                 c["Fill_Warning"] = report["message"]
+                # the conduit type used for the area when the workbook left it blank/XXX
+                c["Fill_Assumed_Type"] = report["conduit_type"] if report.get("assumed_type") else None
             else:
                 c["Fill_Pct"] = None
                 c["Fill_Of_Limit"] = None
                 c["Fill_Over"] = False
                 c["Fill_Warning"] = None
+                c["Fill_Assumed_Type"] = None
     except Exception:
         pass

@@ -1130,7 +1130,7 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
   if (!rows.length) return <p style={{ padding: "16px", color: "var(--text-dim)" }}>No conduit rows found.</p>;
 
   // Internal, backend-computed fields (NEC fill %, sheet numbering), not data columns.
-  const _hiddenCols = new Set(["Fill_Warning", "Fill_Pct", "Fill_Of_Limit", "Fill_Over", "Seq_Start", "Sheet_Count"]);
+  const _hiddenCols = new Set(["Fill_Warning", "Fill_Pct", "Fill_Of_Limit", "Fill_Over", "Fill_Assumed_Type", "Seq_Start", "Sheet_Count"]);
   const displayCols = templateOrdered(CONDUIT_TEMPLATE_COLS, Object.keys(rows[0]))
     .filter(c => !_hiddenCols.has(c));
 
@@ -1154,6 +1154,7 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
           const overfillMsg = row["Fill_Warning"]; // over-fill explanation, or null
           const fillPct = row["Fill_Pct"];         // raw NEC fill % (of total conduit area), or null
           const fillOfLimit = row["Fill_Of_Limit"];// same fill as % of the NEC-allowable area (>100 = over)
+          const assumedType = row["Fill_Assumed_Type"]; // conduit type assumed (blank/XXX type), or null
 
           return (
             <tr key={i}
@@ -1210,9 +1211,10 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                       : <span style={{ color: "var(--status-error-soft)", fontSize: "0.72rem" }}>✗ see log</span>
                   )}
                   {fillPct != null && (
-                    <span title={overfillMsg ||
+                    <span title={(overfillMsg ||
                         `NEC conduit fill: ${fillPct}% of the conduit's internal area` +
-                        (fillOfLimit != null ? ` — ${fillOfLimit}% of the NEC-allowable fill` : "")}
+                        (fillOfLimit != null ? ` — ${fillOfLimit}% of the NEC-allowable fill` : "")) +
+                        (assumedType ? `  (conduit type not specified — assumed ${assumedType} for the area)` : "")}
                       style={{
                         fontSize: "0.72rem",
                         fontWeight: overfill ? 700 : 500,
@@ -1220,7 +1222,8 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                       }}>
                       {(overfill ? "⚠ " : "") + `Fill ${fillPct}%` +
                         (fillOfLimit != null ? ` (${fillOfLimit}% of limit)` : "") +
-                        (overfill ? " — over" : "")}
+                        (overfill ? " — over" : "") +
+                        (assumedType ? ` · ${assumedType} assumed` : "")}
                     </span>
                   )}
                 </div>
