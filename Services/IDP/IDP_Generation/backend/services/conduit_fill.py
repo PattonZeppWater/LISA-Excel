@@ -1,33 +1,57 @@
 """
 conduit_fill.py — NEC Chapter 9 conduit-fill check (advisory).
 
-Computes how full a conduit is straight from the published NEC Chapter 9 tables, and flags
-it for the engineer only when it exceeds the allowable fill. Advisory: it surfaces the
-number, never "approves" a conduit.
+Computes how full a conduit is the way NEC Chapter 9 does, and flags it for the engineer
+only when it exceeds the allowable fill. This is an ADVISORY check that shows its work —
+it never "approves" a conduit; it surfaces a number + the assumptions behind it so a human
+can confirm against the real cable part numbers before sizing.
 
-METHOD (NEC 2020 Chapter 9 — tables only, no manufacturer assumptions)
-  fill% = (sum of each conductor's cross-sectional area, Table 5) / (conduit internal area,
-  Table 4), compared to the maximum fill from Table 1:
-      1 conductor -> 53%      exactly 2 -> 31%      3 or more -> 40%
+METHOD (NEC 2020 Chapter 9)
+  fill% = (sum of each item's cross-sectional area) / (conduit internal area, Table 4),
+  compared to the maximum fill from Table 1:
+      1 conductor/cable -> 53%      exactly 2 -> 31%      3 or more -> 40%
+  (The Table 1 Note 4 "nipple" 60% exception for sleeves <=24" is intentionally NOT applied
+  — omitting it is the conservative choice.)
 
-  Every conductor is counted individually by its gauge from NEC Ch.9 Table 5 (THHN/THWN):
-  a fill row contributes Wire_Count conductors of its gauge. A twisted pair therefore counts
-  as its two conductors by gauge, a triad as three, etc.
+TWO KINDS OF ITEM
+  * Individual insulated conductors (POWER / CONTROL / GROUND): area from Table 5 by gauge;
+    each counts as one conductor (Wire_Count per row). The equipment grounding conductor
+    counts toward fill like any other conductor.
+  * Multi-conductor CABLES (a real jacketed cable): per NEC Ch.9 Table 1, Note 9, a cable of
+    two or more conductors is treated as a SINGLE conductor whose area is a circle of the
+    cable's OVERALL outside diameter, area = pi*(OD/2)^2 (for an elliptical jacket, Note 9
+    uses the MAJOR diameter). So each cable counts as ONE item at its jacket OD — never its
+    inner conductors, and never OD + inner conductors. CAT-x and FIBER are always jacketed
+    cables. A twisted pair is a jacketed cable ONLY when it's actually SHIELDED (a real TSP);
+    an UNSHIELDED pair (e.g. a DI/DO conductor pair entered as "TSP") is NOT a cable — it's
+    two individual conductors, counted by gauge. Shield is detected from the workbook's own
+    markers (a SHLD drain terminal / a '...-Shld...' terminal block); see _is_shielded.
 
-  NOTE ON MULTICONDUCTOR CABLES: NEC Ch.9 Table 1, Note 9 permits treating a jacketed cable
-  as ONE conductor sized by its overall OD, but that OD is manufacturer data (varies by part)
-  and is not in any NEC table. By request, this check does NOT use assumed cable ODs — it
-  counts conductors by their NEC Table 5 gauge only. For a genuinely jacketed cable this is a
-  lower bound (it omits the jacket/shield), so confirm sizing against the real cable where a
-  conduit is near the limit.
+CABLE DIAMETERS — the one real assumption
+  Note 9 says cable OD comes from the MANUFACTURER's spec, not an NEC table, because jacket
+  dimensions vary by product. The workbook carries no part number, so the values below are
+  documented typical single-cable ODs; a real design should confirm them against the actual
+  part (override the table, or read them if the workbook ever carries an OD/part column):
+      - TSP single shielded pair (nominal OD): #18 = 0.222" (Belden 8760),
+        #16 = 0.313" (Belden 8719), #14 = 0.355" (Belden 8720).
+      - CAT-5/5e/6/6A: 0.335"  (Southwire Cat6A 23 AWG / 4 pr).
+      - FIBER: 0.30" representative (indoor/outdoor distribution; construction-dependent).
+  IMPORTANT: multiple SEPARATE single-pair rows are counted as that many separate cables.
+  If the design actually runs one MULTI-PAIR cable (all pairs under one jacket), it should
+  be entered as one row — that is a much smaller single OD, so model it that way.
 
-  Any item with no usable gauge (CAT/FIBER/pull rope/N-A) is skipped and reported, so a
-  reported fill is a lower bound whenever something was skipped. A conduit whose type or
-  trade size isn't in the NEC tables is not flagged (can't be evaluated) rather than guessed.
+OTHER RULES
+  * Individual-conductor areas are THHN/THWN (Table 5). #16 uses the TFFN fixture-wire area
+    (THHN isn't tabulated below 14 AWG) — the standard small-signal conductor.
+  * Any item with no usable gauge/OD (pull rope, N/A, unknown) is skipped and reported, so
+    a reported fill is a lower bound when something was skipped.
+  * A conduit whose type or trade size isn't in the NEC tables is NOT flagged (can't be
+    evaluated) rather than guessed at.
 
-Sources: NEC 2020 Ch.9 Tables 1, 4, 5. #16 uses the TFFN fixture-wire area (THHN isn't
-tabulated below 14 AWG). Values verified against the printed tables.
+NEC values below are the published Chapter 9 figures, verified against the printed tables.
+Sources: NEC 2020 Ch.9 Tables 1 (+Note 9), 4, 5.
 """
+import math
 
 # ── NEC Ch.9 Table 5 — approximate area (sq in) of one THHN/THWN conductor by gauge.
 # (#16 = TFFN fixture wire, the standard small-signal conductor; THHN starts at #14.)
@@ -36,6 +60,18 @@ _WIRE_AREA_SQIN = {
     "6": 0.0507, "4": 0.0824, "3": 0.0973, "2": 0.1158, "1": 0.1562,
     "1/0": 0.1855, "2/0": 0.2223, "3/0": 0.2679, "4/0": 0.3237,
 }
+
+# ── Cable overall outside diameters (inches). A cable fills the conduit by its OD area
+# and counts as ONE item (NEC Ch.9). Edit these to match the products actually used.
+_CAT_OD_IN = 0.335    # CAT-5/5e/6/6A (Southwire Cat6A 23AWG/4pr; user-confirmed)
+_FIBER_OD_IN = 0.30   # representative fiber distribution cable (construction-dependent)
+# TSP (single shielded pair) OD by conductor gauge; falls back to _TSP_OD_DEFAULT.
+_TSP_OD_BY_GAUGE_IN = {"18": 0.222, "16": 0.313, "14": 0.355}
+_TSP_OD_DEFAULT_IN = 0.30
+
+
+def _circle_area(od_in: float) -> float:
+    return math.pi * (od_in / 2.0) ** 2
 
 # ── NEC Ch.9 Table 4 — total (100%) internal area (sq in) per conduit type + trade size.
 _CONDUIT_AREA_SQIN = {
@@ -108,20 +144,57 @@ def _norm_gauge(raw):
     return s if s in _WIRE_AREA_SQIN else None
 
 
+def _is_shielded(row) -> bool:
+    """True if this fill row is an actually-shielded pair — i.e. a real jacketed TSP cable
+    — vs an unshielded 'pair' that is just two individual conductors. Detected from the
+    workbook's own shield markers: a 'SHLD' drain terminal, or a shielded terminal block
+    ('...-Shld...'). A genuine TSP run carries these; a plain DI/DO conductor pair doesn't."""
+    for n in (1, 2, 3, 4):
+        for side in ("Src", "Dst"):
+            if str(row.get(f"Wire{n}_{side}TermNum") or "").strip().upper() == "SHLD":
+                return True
+    for n in (1, 2, 3, 4):
+        for side in ("Src", "Dst"):
+            if "SHLD" in str(row.get(f"Wire{n}_{side}TermBlk") or "").upper():
+                return True
+    return False
+
+
+def _cable_od(wire_type: str, gauge_key, shielded: bool):
+    """Overall OD (inches) if this row is a JACKETED multi-conductor cable — counted as one
+    conductor by its OD (NEC Ch.9 Table 1 Note 9) — else None (count its conductors by gauge).
+    CAT-x and FIBER are always jacketed cables. A twisted pair (TSP) fills as a jacketed cable
+    ONLY when it's actually SHIELDED; an unshielded pair is two individual conductors."""
+    wt = str(wire_type or "").strip().upper()
+    if wt.startswith("CAT"):          # CAT-5 / CAT-6 / CAT6A ...
+        return _CAT_OD_IN
+    if "FIBER" in wt or "FO" == wt:
+        return _FIBER_OD_IN
+    if ("TSP" in wt or ("SHIELD" in wt and "PAIR" in wt)) and shielded:
+        return _TSP_OD_BY_GAUGE_IN.get(gauge_key, _TSP_OD_DEFAULT_IN)
+    return None
+
+
 def _item_area(row):
-    """What this fill row adds to the conduit: (area_sqin, conductors, skipped).
-    Every conductor is counted by its NEC Table 5 gauge area (Wire_Count of them per row).
-    A row with no usable gauge (CAT/FIBER/pull rope/N-A) is skipped and reported."""
+    """What this fill row adds to the conduit, the NEC way.
+    Returns (area_sqin, count, skipped, kind, spec):
+      - a CABLE (TSP/CAT/FIBER) -> (OD-circle area, 1, 0, 'cable', od_in): one conductor at
+        its jacket OD (NEC Ch.9 Table 1 Note 9).
+      - individual conductors    -> (n * gauge area, n, 0, 'conductor', gauge).
+      - unusable (no gauge/OD)    -> (0, 0, n, None, None): skipped, reported separately."""
     try:
         n = int(row.get("Wire_Count") or 0)
     except (TypeError, ValueError):
         n = 0
     if n <= 0:
-        return 0.0, 0, 0
+        return 0.0, 0, 0, None, None
     gauge = _norm_gauge(row.get("Wire_Size_Raw"))
+    od = _cable_od(row.get("Wire_Type"), gauge, _is_shielded(row))
+    if od is not None:
+        return _circle_area(od), 1, 0, "cable", od       # a jacketed cable = one item at its OD
     if gauge is not None:
-        return n * _WIRE_AREA_SQIN[gauge], n, 0
-    return 0.0, 0, n                          # no usable gauge -> skip (reported)
+        return n * _WIRE_AREA_SQIN[gauge], n, 0, "conductor", gauge   # individual conductors
+    return 0.0, 0, n, None, None                          # not a known cable, no gauge -> skip
 
 
 def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
@@ -129,8 +202,12 @@ def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
     (conduit type/size not in the NEC tables, or nothing to count). Never raises.
 
     Report dict (always returned when evaluable, over-fill or not):
-      { conduit, conduit_type, conduit_size, conductors, fill_area, allowed_area,
-        conduit_area, fill_pct, allowed_pct, over (bool), skipped, message (str|None) }
+      { conduit, conduit_type, conduit_size, items, cables, conductors, fill_area,
+        allowed_area, conduit_area, fill_pct, allowed_pct, over (bool), skipped,
+        message (str|None -- set iff over) }
+    where `items` = NEC conductor count for the Table 1 rule (each cable counts as 1),
+    `cables` = multi-conductor cables counted by jacket OD, `conductors` = individual
+    conductors counted by gauge.
     """
     try:
         ctype = _norm_type(conduit_row.get("Cond_Type"))
@@ -139,38 +216,59 @@ def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
             return None   # type/size not in NEC tables -> can't evaluate
         conduit_area = _CONDUIT_AREA_SQIN[ctype][csize]
 
-        conductors = 0   # every conductor counted by its NEC Table 5 gauge
+        items = 0        # NEC "number of conductors" for the fill-% rule (a cable counts 1)
+        cables = 0       # multi-conductor cables (counted by jacket OD, Table 1 Note 9)
+        conductors = 0   # individual conductors (counted by gauge, Table 5)
         skipped = 0
         fill_area = 0.0
         for r in fill_rows:
-            area, cnt, skip = _item_area(r)
+            area, cnt, skip, kind, _spec = _item_area(r)
             fill_area += area
-            conductors += cnt
+            items += cnt
             skipped += skip
+            if kind == "cable":
+                cables += 1
+            elif kind == "conductor":
+                conductors += cnt
 
-        if conductors == 0:
+        if items == 0:
             return None   # nothing countable
 
-        allowed_pct = _fill_pct(conductors)
+        allowed_pct = _fill_pct(items)
         allowed_area = conduit_area * allowed_pct
         used_pct = (fill_area / conduit_area) * 100.0
         over = fill_area > allowed_area + 1e-9
+
+        # Human-readable item breakdown, so the number isn't a black box.
+        parts = []
+        if cables:
+            parts.append(f"{cables} cable(s) by jacket OD")
+        if conductors:
+            parts.append(f"{conductors} conductor(s) by gauge")
+        item_desc = " + ".join(parts) if parts else f"{items} conductor(s)"
 
         tag = str(conduit_row.get("Cond_Tag") or "").strip()
         msg = None
         if over:
             msg = (
                 f"Conduit '{tag}' over NEC fill: {used_pct:.0f}% of a {csize}\" {ctype} "
-                f"({conductors} conductors by NEC Table 5 gauge; NEC Ch.9 limit "
-                f"{allowed_pct*100:.0f}%). Use a larger conduit or fewer/smaller conductors."
+                f"({item_desc} = {items} conductors; NEC Ch.9 limit {allowed_pct*100:.0f}%). "
+                f"Use a larger conduit or fewer/smaller cables."
             )
+            if cables:
+                msg += (" Each TSP/cable is counted as one conductor at its jacket OD (NEC "
+                        "Table 1 Note 9); ODs are typical manufacturer values - confirm the "
+                        "actual part number, and if the pairs share one multi-pair jacket "
+                        "enter them as a single cable.")
             if skipped:
-                msg += (f" {skipped} item(s) had no usable gauge (CAT/FIBER/pull rope/N-A) "
-                        f"and weren't counted, so actual fill is higher.")
+                msg += (f" {skipped} item(s) had no usable gauge/OD (pull rope/N-A) and "
+                        f"weren't counted, so actual fill is higher.")
         return {
             "conduit": tag,
             "conduit_type": ctype,
             "conduit_size": csize,
+            "items": items,
+            "cables": cables,
             "conductors": conductors,
             "conduit_area": round(conduit_area, 4),
             "fill_area": round(fill_area, 4),
