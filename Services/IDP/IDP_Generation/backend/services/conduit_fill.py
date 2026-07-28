@@ -237,6 +237,8 @@ def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
         allowed_pct = _fill_pct(items)
         allowed_area = conduit_area * allowed_pct
         used_pct = (fill_area / conduit_area) * 100.0
+        # Fill expressed as a percentage of the NEC-ALLOWABLE area (Table 1 limit); >100% = over.
+        of_limit_pct = (fill_area / allowed_area) * 100.0 if allowed_area else None
         over = fill_area > allowed_area + 1e-9
 
         # Human-readable item breakdown, so the number isn't a black box.
@@ -275,6 +277,7 @@ def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
             "allowed_area": round(allowed_area, 4),
             "fill_pct": round(used_pct, 1),
             "allowed_pct": round(allowed_pct * 100, 1),
+            "of_limit_pct": round(of_limit_pct) if of_limit_pct is not None else None,
             "over": over,
             "skipped": skipped,
             "message": msg,
@@ -285,9 +288,10 @@ def evaluate(conduit_row: dict, fill_rows: list) -> dict | None:
 
 def annotate_conduits(conduit_index: list, fill_index: list) -> None:
     """Annotate each conduit row with the fill result, in place. Never raises.
-      Fill_Pct     -> number (percent of conduit area filled) or None if not evaluable
-      Fill_Over    -> True when over the NEC limit (the 'dangerous' case), else False
-      Fill_Warning -> the over-fill message (str) or None
+      Fill_Pct      -> number (percent of conduit area filled) or None if not evaluable
+      Fill_Of_Limit -> that same fill as a percent of the NEC-allowable area (>100% = over)
+      Fill_Over     -> True when over the NEC limit (the 'dangerous' case), else False
+      Fill_Warning  -> the over-fill message (str) or None
     Lets the frontend show the % next to Generate for every conduit, and highlight/alert
     only the over-fill ones."""
     try:
@@ -301,10 +305,12 @@ def annotate_conduits(conduit_index: list, fill_index: list) -> None:
             report = evaluate(c, by_tag.get(tag, [])) if tag else None
             if report:
                 c["Fill_Pct"] = report["fill_pct"]
+                c["Fill_Of_Limit"] = report["of_limit_pct"]
                 c["Fill_Over"] = report["over"]
                 c["Fill_Warning"] = report["message"]
             else:
                 c["Fill_Pct"] = None
+                c["Fill_Of_Limit"] = None
                 c["Fill_Over"] = False
                 c["Fill_Warning"] = None
     except Exception:
