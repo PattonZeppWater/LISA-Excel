@@ -518,11 +518,13 @@ def wire_labels():
 
 @idp_gen_bp.route("/fill-report", methods=["POST"])
 def fill_report():
-    """Build an Excel report of every conduit's NEC Chapter 9 fill %.
+    """Build an Excel report of every conduit's NEC Chapter 9 fill % and save it via a
+    native Save-As dialog (a browser download doesn't work inside the LISA webview).
 
-    Request body (JSON): { "conduit_index": [...], "fill_index": [...], "filename": str }
-    Returns the .xlsx. One row per conduit: raw fill %, % of the NEC-allowable limit, the
-    conductor/cable breakdown, and whether it's over. Over-fill rows are shaded red.
+    Body: { "conduit_index": [...], "fill_index": [...], "filename": str, "default_dir": str }
+    One row per conduit: raw fill %, % of the NEC-allowable limit, the conductor/cable
+    breakdown, and whether it's over (over-fill rows shaded red).
+    Returns { ok: true, path } | { ok: false, cancelled: true } | { ok: false, error }.
     """
     body = request.get_json(silent=True) or {}
     conduit_index = body.get("conduit_index", [])
@@ -598,15 +600,34 @@ def fill_report():
 
         buf = io.BytesIO()
         wb.save(buf)
-        buf.seek(0)
-        return send_file(
-            buf,
-            mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            as_attachment=True,
-            download_name=download_name,
-        )
+        xl_bytes = buf.getvalue()
     except Exception as e:
-        return jsonify({"error": str(e)}), 500
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    # Save via a native Save-As dialog (browser download doesn't work in the LISA webview).
+    default_dir = body.get("default_dir") or ""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes("-topmost", True)
+        path = filedialog.asksaveasfilename(
+            title="Save Conduit Fill Report",
+            initialfile=download_name,
+            initialdir=default_dir or None,
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+        )
+        root.destroy()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    if not path:
+        return jsonify({"ok": False, "cancelled": True})
+    try:
+        with open(path, "wb") as fh:
+            fh.write(xl_bytes)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not write the file: {e}"}), 500
+    return jsonify({"ok": True, "path": path})
 
 
 # â”€â”€ Download (re-export Excel) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

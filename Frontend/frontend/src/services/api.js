@@ -281,21 +281,16 @@ export async function exportIdpConduitList(payload) {
   }
 }
 
-export async function downloadIdpFillReport(conduitIndex, fillIndex, filename) {
+export async function exportIdpFillReport(payload) {
   try {
     const res = await fetch('/api/idp-gen/fill-report', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ conduit_index: conduitIndex, fill_index: fillIndex, filename }),
+      body: JSON.stringify(payload),
     })
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: 'Fill report download failed' }))
-      return { ok: false, error: err.error || 'Fill report download failed' }
-    }
-    const blob        = await res.blob()
-    const disposition = res.headers.get('Content-Disposition') || ''
-    const match       = disposition.match(/filename="?([^"]+)"?/)
-    return { ok: true, blob, filename: match ? match[1] : 'ConduitFill.xlsx' }
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) return { ok: false, error: data.error || 'Fill report failed' }
+    return data
   } catch {
     return { ok: false, error: 'Could not reach IDP_Generation. Is the service running?' }
   }

@@ -7,7 +7,7 @@ import {
   generateIdpDwg,
   downloadIdpWorkbook,
   downloadIdpWireLabels,
-  downloadIdpFillReport,
+  exportIdpFillReport,
   downloadIdpTemplate,
   exportIdpConduitList,
 } from "../services/api";
@@ -680,19 +680,22 @@ export default function IdpGeneration() {
 
   async function handleFillReport() {
     if (!wb) return;
+    // A browser blob download doesn't work in the LISA webview, so the backend builds the
+    // .xlsx and pops a native Save-As dialog (defaulting to the output folder).
     setLoading("fillreport");
-    const result = await downloadIdpFillReport(wb.conduit_index, wb.fill_index, wb.filename);
+    const result = await exportIdpFillReport({
+      conduit_index: wb.conduit_index,
+      fill_index: wb.fill_index,
+      filename: wb.filename,
+      default_dir: outputFolder || "",
+    });
     setLoading(null);
+    if (result.cancelled) return;              // user closed the Save dialog — no message
     if (!result.ok) {
-      setStatus({ type: "error", message: result.error });
+      setStatus({ type: "error", message: `Fill report failed: ${result.error}` });
       return;
     }
-    const url = URL.createObjectURL(result.blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = result.filename;
-    a.click();
-    URL.revokeObjectURL(url);
+    setStatus({ type: "success", message: `Conduit fill report saved to: ${result.path}` });
   }
 
   // ── JSON paste / copy ────────────────────────────────────────────────────
