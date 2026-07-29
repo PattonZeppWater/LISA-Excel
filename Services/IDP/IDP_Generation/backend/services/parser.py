@@ -277,29 +277,58 @@ def _parse_block_index(wb) -> dict:
     return out
 
 
+_PROJDESC_LABELS = {"owner", "job title", "content", "proj no.", "proj no", "project no.",
+                    "project number", "status", "date", "engineer", "drafter"}
+
+
 def _parse_project_desc(wb) -> dict:
     """Read the optional 'Project Description' sheet into ordered title-block lines.
 
-    Layout is a horizontal form: a row of labels (Owner / Job Title / Content /
-    Proj No. / Status / Date / Engineer / Drafter) with the values in the row
-    directly beneath. These columns map POSITIONALLY to ACADE's project-description
-    lines LINE1..LINE24 (i.e. the .wdp *[1]..*[N] fields): the k-th labeled column
-    is LINE k. That mirrors AutoCAD Electrical's "Update Title Block", which fills
-    every drawing's title block from these lines.
+    Layout is a VERTICAL form: a COLUMN of labels (Owner / Job Title / Content / Proj No. /
+    Status / Date / Engineer / Drafter) with each value in the cell to its RIGHT. The labels'
+    top-to-bottom order maps POSITIONALLY to ACADE's project-description lines LINE1..LINE24
+    (the .wdp *[1]..*[N] fields): the k-th label is LINE k -- the same mapping AutoCAD
+    Electrical's "Update Title Block" uses to fill every drawing's title block.
 
-    Returns {"lines": [v1, v2, ...], "labels": [l1, l2, ...]} in column order, or
-    {} when the sheet is absent / has no recognizable labels (so the workbook just
-    falls back to the .wdp template defaults).
+    An older HORIZONTAL sheet (a ROW of labels with the values in the row directly beneath)
+    is still read as a fallback, so workbooks that predate the vertical redesign keep working.
+
+    Returns {"lines": [v1, v2, ...], "labels": [l1, l2, ...]} in field order, or {} when the
+    sheet is absent / has no recognizable labels (workbook then falls back to .wdp defaults).
     """
     name = next((s for s in wb.sheetnames if s.strip().lower() == "project description"), None)
     if not name:
         return {}
     ws = wb[name]
-    known = {"owner", "job title", "content", "proj no.", "proj no", "project no.",
-             "project number", "status", "date", "engineer", "drafter"}
-    ncols = min(int(ws.max_column or 1), 30)
+    known = _PROJDESC_LABELS
+    nrows = min(int(ws.max_row or 1), 40)
+    ncols = min(int(ws.max_column or 1), 40)
+
+    # VERTICAL (current): the label column is whichever column has the most known labels
+    # stacked in it; each value sits in the column immediately to its right. Detected first
+    # because a vertical sheet would otherwise fool the horizontal reader (every label is on
+    # its own row, so "row of labels + values beneath" would read the next label as a value).
+    best_col, best_hits = 0, 0
+    for c in range(1, ncols + 1):
+        hits = sum(1 for r in range(1, nrows + 1)
+                   if str(ws.cell(r, c).value or "").strip().lower() in known)
+        if hits > best_hits:
+            best_hits, best_col = hits, c
+    if best_col and best_hits >= 2:
+        labels, lines = [], []
+        for r in range(1, nrows + 1):
+            label = str(ws.cell(r, best_col).value or "").strip()
+            if label.strip().lower() not in known:
+                continue
+            val = ws.cell(r, best_col + 1).value
+            labels.append(label)
+            lines.append("" if val is None else str(val).strip())
+        if labels:
+            return {"lines": lines, "labels": labels}
+
+    # HORIZONTAL (legacy fallback): a row of labels, values in the row directly beneath.
     label_row = None
-    for r in range(1, min(int(ws.max_row or 1), 10) + 1):
+    for r in range(1, min(nrows, 10) + 1):
         vals = [str(ws.cell(r, c).value or "").strip().lower() for c in range(1, ncols + 1)]
         if any(v in known for v in vals):
             label_row = r
