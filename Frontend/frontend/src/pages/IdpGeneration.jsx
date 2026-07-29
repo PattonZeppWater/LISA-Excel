@@ -5,6 +5,8 @@ import {
   getIdpAutoCADStatus,
   browseIdpOutputFolder,
   generateIdpDwg,
+  finalizeIdpProject,
+  reindexIdpDrawingIndex,
   downloadIdpWorkbook,
   downloadIdpWireLabels,
   exportIdpFillReport,
@@ -129,7 +131,6 @@ export default function IdpGeneration() {
   const [wb, setWb]                     = useState(_sess.wb || null);   // { conduit_index, fill_index, original_b64, filename }
   const [outputFolder, setOutputFolder] = useState(_sess.outputFolder || "");
   const [projectNumber, setProjectNumber] = useState(_sess.projectNumber || "");
-  const [fileSuffix, setFileSuffix]       = useState(_sess.fileSuffix || "");
   const [makeProject, setMakeProject]     = useState(_sess.makeProject || false);  // "Make it a project"
   const [activeTab, setActiveTab]       = useState("conduit");
   const [autocad, setAutocad]           = useState(null);   // { running, version }
@@ -184,7 +185,7 @@ export default function IdpGeneration() {
     // Debounced so typing in the small fields doesn't re-serialize the ~MB workbook on
     // every keystroke; saves ~0.6s after the last change.
     const t = setTimeout(() => {
-      const data = { wb, outputFolder, projectNumber, fileSuffix, makeProject, rowResult };
+      const data = { wb, outputFolder, projectNumber, makeProject, rowResult };
       try {
         localStorage.setItem(SESSION_KEY, JSON.stringify(data));
       } catch {
@@ -197,7 +198,7 @@ export default function IdpGeneration() {
       }
     }, 600);
     return () => clearTimeout(t);
-  }, [wb, outputFolder, projectNumber, fileSuffix, makeProject, rowResult]);
+  }, [wb, outputFolder, projectNumber, makeProject, rowResult]);
 
   // ── Match an uploaded conduit-name list against the loaded workbook ────────
   const txtMatch = useMemo(() => {
@@ -405,7 +406,6 @@ export default function IdpGeneration() {
       project_number: projectNumber.trim(),
       seq_num:        seq,
       sheet_max:      sheetMax,   // title block "SHEET n OF <max>"
-      file_suffix:    fileSuffix.trim() || "e",
       make_project:   makeProject,
     };
 
@@ -464,6 +464,17 @@ export default function IdpGeneration() {
     return result;
   }
 
+  // Row "Generate" button: generate the one conduit, then (if it's a project) assemble the
+  // project once so the drawing index + .wdp reflect this drawing. The batch handlers call
+  // handleGenerate directly and finalize ONCE after their loop, so finalize never runs per
+  // conduit during Generate All / Generate from list — only here, for a lone regen.
+  async function handleGenerateRow(conduitIdent, opts = {}) {
+    const r = await handleGenerate(conduitIdent, opts);
+    const ok = r && !r.aborted && r.ok && r.data?.success !== false;
+    if (ok) await finalizeProjectOnce();
+    return r;
+  }
+
   // ── Stop: abort in-flight request(s) ─────────────────────────────────────
   // Aborting stops the frontend from waiting and halts the queue. The DWG already
   // being drawn in AutoCAD finishes server-side (a COM draw can't be yanked mid-call).
@@ -473,6 +484,38 @@ export default function IdpGeneration() {
   function stopAll() {
     stopRef.current = true;
     Object.values(abortMap.current).forEach(c => { try { c.abort(); } catch { /* noop */ } });
+  }
+
+  // ── Finalize the project ONCE (after the whole batch) ────────────────────
+  // When "Make it a project" is on, assemble the AIC project a SINGLE time at the end of a
+  // build: fill the GENERAL-sheet title blocks, populate the drawing index (spilling onto
+  // continuation index sheets when it overflows), and write the .wdp/.aepx. This is kept OUT
+  // of the per-conduit generate so it runs once per build instead of once per drawing.
+  async function finalizeProjectOnce() {
+    if (!makeProject) return;
+    if (!wb || !wb.conduit_index?.length) return;
+    if (!projectNumber.trim() || !outputFolder.trim()) return;
+    const ts = () => new Date().toLocaleTimeString();
+    setGenLog(prev => `[${ts()}] ⚙ Finalizing project — title blocks + drawing index…` + (prev ? "\n\n" + prev : ""));
+    const result = await finalizeIdpProject({
+      output_folder:  outputFolder,
+      project_number: projectNumber.trim(),
+      project_desc:   wb.project_desc || {},
+      conduit_index:  wb.conduit_index,
+    });
+    if (!result.ok) {
+      setGenLog(prev => `[${ts()}] ✗ Finalize failed — ${result.error}` + (prev ? "\n\n" + prev : ""));
+      setStatus({ type: "error", message: `Project finalize failed: ${result.error}` });
+      return;
+    }
+    const d = result.data || {};
+    const pages = d.index_pages || 1;
+    const parts = [`drawing index populated (${pages} index sheet${pages > 1 ? "s" : ""})`];
+    if (d.wdp_path) parts.push(`.wdp: ${String(d.wdp_path).split(/[\\/]/).pop()}`);
+    let entry = `[${ts()}] ✓ Project finalized — ${parts.join(", ")}`;
+    const warns = d.warnings || [];
+    if (warns.length) entry += "\n" + warns.map(w => `  ⚠ ${w}`).join("\n");
+    setGenLog(prev => entry + (prev ? "\n\n" + prev : ""));
   }
 
   // ── Generate every conduit (sequential — AutoCAD/COM is single-threaded) ──
@@ -509,6 +552,8 @@ export default function IdpGeneration() {
     const stopped = stopRef.current;
     stopRef.current = false;
     setGenAll(null);
+    // Assemble the project ONCE now that every conduit is drawn (not per conduit).
+    if (!stopped && done > 0) await finalizeProjectOnce();
     setStatus(stopped
       ? { type: "error",   message: `Generate All stopped — ${done} of ${idents.length} conduit(s) processed.` }
       : { type: "success", message: `Generate All finished — ${idents.length} conduit(s) processed. See the log for per-file results.` });
@@ -617,6 +662,7 @@ export default function IdpGeneration() {
     const stopped = stopRef.current;
     stopRef.current = false;
     setGenAll(null);
+    if (!stopped && done > 0) await finalizeProjectOnce();   // assemble the project once at the end
     setStatus(stopped
       ? { type: "error",   message: `Generate from list stopped — ${done} of ${idents.length} processed.` }
       : { type: "success", message: `Generate from list finished — ${idents.length} conduit(s) processed. See the log.` });
@@ -716,6 +762,28 @@ export default function IdpGeneration() {
       return;
     }
     setStatus({ type: "success", message: `Wire label print report saved to: ${result.path}` });
+  }
+
+  // ── Regenerate the Drawing Index from a project .wdp ─────────────────────
+  // Reads the project file the user picks (native dialog on the backend) and rewrites the
+  // DRAWING INDEX table from it — independent of the loaded workbook, so drawings added
+  // manually in ACADE are included. Reads the .wdp as-is; never rewrites it.
+  async function handleReindexFromWdp() {
+    setLoading("reindex");
+    const result = await reindexIdpDrawingIndex();
+    setLoading(null);
+    if (result.cancelled) return;                 // user closed the file dialog
+    const ts = new Date().toLocaleTimeString();
+    if (!result.ok) {
+      setStatus({ type: "error", message: `Drawing index rebuild failed: ${result.error}` });
+      setGenLog(prev => `[${ts}] ✗ Drawing index rebuild — ${result.error}` + (prev ? "\n\n" + prev : ""));
+      return;
+    }
+    let entry = `[${ts}] ✓ Drawing index rebuilt from ${String(result.wdp_path || "").split(/[\\/]/).pop()} — `
+      + `${result.drawings} drawing(s) across ${result.index_pages} index sheet(s)`;
+    if (result.warnings?.length) entry += "\n" + result.warnings.map(w => `  ⚠ ${w}`).join("\n");
+    setGenLog(prev => entry + (prev ? "\n\n" + prev : ""));
+    setStatus({ type: "success", message: `Drawing index rebuilt — ${result.drawings} drawing(s) listed.` });
   }
 
   // ── JSON paste / copy ────────────────────────────────────────────────────
@@ -842,26 +910,16 @@ export default function IdpGeneration() {
 
             <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
               <span style={{ color: "var(--text-label)", fontSize: "0.78rem" }}>Project number</span>
-              <div style={{ display: "flex", gap: "6px" }}>
-                <input
-                  type="text"
-                  value={projectNumber}
-                  onChange={e => setProjectNumber(e.target.value)}
-                  placeholder="e.g. 56.1077"
-                  style={{ ...INPUT_STYLE, flex: 2 }}
-                />
-                <input
-                  type="text"
-                  value={fileSuffix}
-                  onChange={e => setFileSuffix(e.target.value)}
-                  placeholder="suffix (e)"
-                  title="File suffix — defaults to 'e' if left blank"
-                  style={{ ...INPUT_STYLE, flex: 1, minWidth: "60px" }}
-                />
-              </div>
+              <input
+                type="text"
+                value={projectNumber}
+                onChange={e => setProjectNumber(e.target.value)}
+                placeholder="e.g. 56.1077"
+                style={{ ...INPUT_STYLE }}
+              />
               {projectNumber.trim() && (
                 <span style={{ color: "var(--text-dim)", fontSize: "0.72rem" }}>
-                  Files: {projectNumber.trim()}-01{(fileSuffix.trim() || "e")}, {projectNumber.trim()}-02{(fileSuffix.trim() || "e")}, …
+                  Files (per IC.EDC.S011): {projectNumber.trim()}-D.01, {projectNumber.trim()}-D.02, …
                 </span>
               )}
             </div>
@@ -1052,6 +1110,14 @@ export default function IdpGeneration() {
             >
               {loading === "wirelabelprint" ? "Building…" : "⬇ Wire label print (Excel)"}
             </button>
+            <button
+              onClick={handleReindexFromWdp}
+              disabled={loading === "reindex"}
+              style={{ background: "none", border: "1px solid var(--border-strong)", color: "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: loading === "reindex" ? "default" : "pointer", fontSize: "0.75rem" }}
+              title={"Rebuild the DRAWING INDEX sheet from a project .wdp you pick.\nReads every drawing in the project (including ones added manually in ACADE) and rewrites the index table.\nReads the .wdp as-is; it does not modify the project file."}
+            >
+              {loading === "reindex" ? "Working…" : "🔄 Regenerate index (from .wdp)"}
+            </button>
           </div>
           {jsonPasteOpen && (
             <div style={{ display: "flex", flexDirection: "column", gap: "4px", paddingBottom: "4px" }}>
@@ -1093,7 +1159,7 @@ export default function IdpGeneration() {
               rows={wb.conduit_index}
               rowLoading={rowLoading}
               rowResult={rowResult}
-              onGenerate={handleGenerate}
+              onGenerate={handleGenerateRow}
               onStop={stopRow}
               onRemove={handleRemoveConduit}
               generating={generating}

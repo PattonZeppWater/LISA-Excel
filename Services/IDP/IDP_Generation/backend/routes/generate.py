@@ -9,6 +9,7 @@ Endpoints:
   GET  /api/autocad-status         Check if AutoCAD is running on this machine
   GET  /api/browse-folder          Open a tkinter folder picker; return chosen path
   POST /api/generate               Generate one DWG for a given conduit_ident
+  POST /api/finalize-project       Assemble the project ONCE (GENERAL sheets + drawing index + .wdp/.aepx)
   POST /api/wire-labels            Generate wire-labels Excel from fill_index
   POST /api/download               Re-export current workbook state to Excel
 """
@@ -257,9 +258,10 @@ def generate():
     cond_tag = conduit_row.get("Cond_Tag") or f"CONDUIT_{conduit_ident}"
 
     if project_number and seq_num is not None:
-        safe_proj   = "".join(c for c in project_number if c.isalnum() or c in "-_.")
-        safe_suffix = "".join(c for c in file_suffix if c.isalnum() or c in "-_.")
-        output_filename = f"{safe_proj}-{int(seq_num):02d}{safe_suffix}.dwg"
+        # IC.EDC.S011 Interconnect-Diagram (IDP) drawing number: <project>-D.NN (category D,
+        # no scope-of-work number, 2-digit index). seq_num is this conduit's project-sequential
+        # position among the conduit sheets.
+        output_filename = wdp_writer.conduit_drawing_no(project_number, int(seq_num)) + ".dwg"
     else:
         safe_tag = "".join(c for c in str(cond_tag) if c.isalnum() or c in "-_.")
         output_filename = f"{safe_tag}.dwg"
@@ -335,13 +337,13 @@ def generate():
     base, ext = os.path.splitext(output_path)          # ext == ".dwg"
     n_sheets = len(chunks)
     if project_number and seq_num is not None:
-        # Continuation sheets take the NEXT consecutive drawing numbers (e.g. 15e -> 16e
-        # -> 17e), matching standard sheet numbering, instead of a "-N" suffix on the
-        # base name. seq_num is this conduit's project-sequential start (already offset
-        # for earlier conduits' continuations), so sheet k is seq_num + k.
+        # Continuation sheets take the NEXT consecutive Interconnect-Diagram numbers (D.15 ->
+        # D.16 -> D.17), matching IC.EDC.S011, instead of a "-N" suffix on the base name.
+        # seq_num is this conduit's project-sequential start (already offset for earlier
+        # conduits' continuations), so sheet k is D.(seq_num + k).
         sheet_paths = [
             os.path.join(output_folder,
-                         f"{safe_proj}-{int(seq_num) + k:02d}{safe_suffix}{ext}")
+                         wdp_writer.conduit_drawing_no(project_number, int(seq_num) + k) + ext)
             for k in range(n_sheets)
         ]
     else:
@@ -349,10 +351,12 @@ def generate():
         sheet_paths = [output_path if k == 0 else f"{base}-{k + 1}{ext}"
                        for k in range(n_sheets)]
 
-    # Sheet numbering leads with the GENERAL sheets (cover/index/legend) when we're
-    # assembling a full project, so conduit sheet numbers continue after them; otherwise
-    # conduit sheets number from 1.
-    general_offset = wdp_writer.GENERAL_SHEET_COUNT if make_project else 0
+    # Sheet numbering leads with the GENERAL sheets (cover / index page(s) / legend) when
+    # we're assembling a full project, so conduit sheet numbers continue after them; otherwise
+    # conduit sheets number from 1. project_general_offset accounts for a multi-page drawing
+    # index (a big project's index spills onto continuation sheets, pushing the conduits down),
+    # and is computed identically here and in the finalize pass so the numbers agree.
+    general_offset = wdp_writer.project_general_offset(conduit_index) if make_project else 0
 
     out_paths, all_warnings, errors, validations = [], [], [], []
     if _fill_warning:
@@ -395,7 +399,7 @@ def generate():
 
         # DRAWING_NO on the title block = this sheet's own drawing number, i.e. its filename
         # stem (e.g. 73.1159-15e). SHEET = its running position in the whole deliverable:
-        # the cover/index/legend take 1..GENERAL_SHEET_COUNT, so conduit sheets continue
+        # the cover / index page(s) / legend take 1..general_offset, so conduit sheets continue
         # after them (no restart at 1). general_offset is 0 when not making a project.
         drawing_no  = os.path.splitext(os.path.basename(sheet_paths[k]))[0]
         conduit_seq = (int(seq_num) + k) if seq_num is not None else None   # 1-based across conduits + continuations
@@ -454,37 +458,209 @@ def generate():
         if str(r.get("Cond_Tag") or "").strip()
     ]
 
-    # Write/refresh the AutoCAD Electrical project file(s) in the output folder, named after
-    # the project number. Best-effort: never let a project-file problem fail the generation.
-    if not errors and project_number:
-        if make_project:
-            # Full AIC project: copy the GENERAL template sheets (G1-G3) in, then write a
-            # sectioned .wdp (GENERAL + INTERCONNECTION DIAGRAMS) and a matching .aepx.
-            general = wdp_writer.ensure_project_sheets(output_folder, project_number)
-            # Fill the GENERAL sheet title blocks (DRAWING_NO 73.1159-G1, SHEET 1/2/3,
-            # project lines). Fills whichever sheets still need it -- including ones that
-            # already existed in the folder from an earlier run -- but a signature marker
-            # keeps it to once per project so Generate All doesn't re-open them per conduit.
-            to_fill = wdp_writer.general_titleblocks_to_fill(
-                output_folder, project_number, project_desc, general)
-            if to_fill:
-                gw = autocad_bridge.fill_general_titleblocks(to_fill, project_desc)
-                result["warnings"] = (result.get("warnings") or []) + gw
-                if not gw:   # only mark done when all sheets filled cleanly (else retry next run)
-                    wdp_writer.mark_general_titleblocks_filled(
-                        output_folder, project_number, project_desc, general)
-            result["wdp_path"]  = wdp_writer.write_full_project_wdp(
-                output_folder, project_number, project_info=project_desc,
-                valid_cond_tags=valid_cond_tags)
-            result["aepx_path"] = wdp_writer.write_project_aepx(
-                output_folder, project_number, valid_cond_tags=valid_cond_tags)
-        else:
-            # Plain drawing list under INTERCONNECTION DIAGRAMS (unchanged behavior).
-            result["wdp_path"] = wdp_writer.write_project_wdp(
-                output_folder, project_number, project_info=project_desc,
-                valid_cond_tags=valid_cond_tags)
+    # Write/refresh the AutoCAD Electrical project file in the output folder, named after the
+    # project number. Best-effort: never let a project-file problem fail the generation.
+    #
+    # NOTE: full-project assembly (copy GENERAL sheets, fill their title blocks over COM,
+    # populate the drawing index, write the sectioned .wdp/.aepx) is NO LONGER done here per
+    # conduit -- it runs ONCE via /finalize-project after the whole project is generated (see
+    # that route). Doing it per conduit re-opened G1-G3 over COM on every Generate-All step.
+    # Here we only record this conduit's descriptions (done above) so finalize can list it.
+    if not errors and project_number and not make_project:
+        # Non-project mode: keep the plain per-call drawing list under INTERCONNECTION
+        # DIAGRAMS (unchanged behavior -- there is no finalize step in this mode).
+        result["wdp_path"] = wdp_writer.write_project_wdp(
+            output_folder, project_number, project_info=project_desc,
+            valid_cond_tags=valid_cond_tags)
 
     return jsonify(result)
+
+
+# â”€â”€ Finalize a project (run ONCE after all conduits are generated) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+
+@idp_gen_bp.route("/finalize-project", methods=["POST"])
+def finalize_project():
+    """Assemble the full AIC project ONCE, after every conduit has been generated.
+
+    This is the work that used to ride on every per-conduit /generate call: copy the GENERAL
+    template sheets (cover / drawing index / symbols legend) in, fill their title blocks over
+    COM, populate the DRAWING INDEX table(s) with every drawing in the project (spilling onto
+    continuation index sheets when the list is too big for one sheet), and write the sectioned
+    .wdp/.aepx. The frontend calls this exactly once at the end of Generate All / Generate
+    from list (and after a standalone single-conduit generate).
+
+    Request body (JSON):
+    {
+        "output_folder":  str,
+        "project_number": str,
+        "project_desc":   {...},   # Project Description sheet -> title block project lines
+        "conduit_index":  [ {...} ],  # for numbering + index rows (Seq_Start / Sheet_Count)
+        "file_suffix":    "e"
+    }
+    Response: { ok, warnings, wdp_path, aepx_path, index_pages, error }
+    """
+    body = request.get_json(silent=True)
+    if not body:
+        return jsonify({"error": "JSON body required"}), 400
+
+    output_folder = body.get("output_folder", "")
+    project_number = str(body.get("project_number") or "").strip()
+    project_desc = body.get("project_desc", {}) or {}
+    conduit_index = body.get("conduit_index", []) or []
+    file_suffix = body.get("file_suffix")
+    file_suffix = "e" if file_suffix is None else str(file_suffix).strip()
+
+    if not output_folder:
+        return jsonify({"error": "No output folder is set."}), 400
+    if not project_number:
+        return jsonify({"error": "A project number is required to finalize a project."}), 400
+
+    warnings = []
+    try:
+        # 1. Copy the GENERAL template sheets in, named per IC.EDC.S011 (<proj>-G.01 cover,
+        # -G.02.. drawing-index page(s), legend last) + title-block map + drawing template.
+        # Returns the authoritative sheet plan (correct numbers even with index continuation
+        # pages). ensure_project_sheets creates every index page the plan calls for.
+        plan = wdp_writer.ensure_project_sheets(output_folder, project_number, conduit_index)
+        index_pages = sum(1 for g in plan if g["is_index"])
+
+        # 3. Fill the NON-index general title blocks (cover + legend). The index pages' title
+        # blocks are written by populate_drawing_index below (one open per page, table + TB).
+        non_index = [
+            (os.path.join(output_folder, g["name"]), g["drawing_no"], g["sheet_number"])
+            for g in plan if not g["is_index"]
+            and os.path.exists(os.path.join(output_folder, g["name"]))
+        ]
+        if non_index:
+            warnings += autocad_bridge.fill_general_titleblocks(non_index, project_desc)
+
+        # 4. Build the full drawing-index row list and split it across the index page(s), then
+        # populate each index sheet's table (and its title block).
+        rows, _pages = wdp_writer.build_index_rows(
+            output_folder, project_number, conduit_index, file_suffix)
+        cap = wdp_writer.INDEX_ROW_CAPACITY
+        index_plan = [g for g in plan if g["is_index"]]
+        index_pages_payload = []
+        for i, g in enumerate(index_plan):
+            slice_rows = rows[i * cap:(i + 1) * cap]
+            index_pages_payload.append({
+                "path": os.path.join(output_folder, g["name"]),
+                "drawing_no": g["drawing_no"],
+                "sheet_number": g["sheet_number"],
+                "rows": slice_rows,
+            })
+        warnings += autocad_bridge.populate_drawing_index(index_pages_payload, project_desc)
+
+        # 5. Write the sectioned .wdp + matching .aepx (GENERAL incl. index continuation pages,
+        # then INTERCONNECTION DIAGRAMS = every current-workbook conduit drawing).
+        valid_cond_tags = [
+            str(r.get("Cond_Tag")).strip()
+            for r in conduit_index
+            if str(r.get("Cond_Tag") or "").strip()
+        ]
+        wdp_path = wdp_writer.write_full_project_wdp(
+            output_folder, project_number, project_info=project_desc,
+            valid_cond_tags=valid_cond_tags, conduit_index=conduit_index)
+        aepx_path = wdp_writer.write_project_aepx(
+            output_folder, project_number, valid_cond_tags=valid_cond_tags)
+
+        return jsonify({
+            "ok": True,
+            "success": True,
+            "warnings": warnings,
+            "wdp_path": wdp_path,
+            "aepx_path": aepx_path,
+            "index_pages": index_pages,
+            "error": None,
+        })
+    except Exception as e:
+        return jsonify({"ok": False, "success": False, "error": str(e),
+                        "warnings": warnings}), 500
+
+
+# -- Regenerate the Drawing Index straight from a .wdp --------------------------
+
+@idp_gen_bp.route("/reindex-drawing-index", methods=["POST"])
+def reindex_drawing_index():
+    """Rebuild the DRAWING INDEX table directly from an AutoCAD Electrical project (.wdp),
+    independent of the loaded workbook -- so drawings added manually in ACADE are picked up.
+
+    Pops a native file picker for the .wdp (unless a wdp_path is supplied), reads every drawing
+    in the project (filename -> DRAWING NO., subsection -> SECTION, Drawing Properties
+    Description 1/2/3 -> DRAWING DESCRIPTION, project order -> SHEET NO.), then writes those rows
+    into the project's DRAWING INDEX sheet(s) -- the General sheet(s) whose Description 1 is
+    'DRAWING INDEX'. It reads the .wdp as-is and does NOT rewrite it, so manual additions stay.
+
+    Body (JSON, optional): { "wdp_path": "C:\\...\\<project>.wdp" }
+    Returns { ok, warnings, drawings, index_pages, wdp_path } | { cancelled } | { error }.
+    """
+    body = request.get_json(silent=True) or {}
+    wdp_path = (body.get("wdp_path") or "").strip()
+
+    if not wdp_path:
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            root.wm_attributes("-topmost", True)
+            wdp_path = filedialog.askopenfilename(
+                title="Select the AutoCAD Electrical project (.wdp)",
+                filetypes=[("AutoCAD Electrical project", "*.wdp"), ("All files", "*.*")],
+            )
+            root.destroy()
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"Could not open the file dialog: {e}"})
+
+    if not wdp_path:
+        return jsonify({"ok": False, "cancelled": True})
+    if not os.path.isfile(wdp_path):
+        return jsonify({"ok": False, "error": f"File not found: {wdp_path}"}), 400
+
+    try:
+        drawings = wdp_writer.parse_wdp(wdp_path)
+        if not drawings:
+            return jsonify({"ok": False, "error": "No drawings found in that .wdp."})
+
+        output_folder = os.path.dirname(wdp_path)
+        # Every drawing becomes a row, in project order (SHEET NO. = running position).
+        rows = [
+            {"sheet_no": i, "drawing_no": d["drawing_no"], "section": d["section"],
+             "description": d["description"]}
+            for i, d in enumerate(drawings, start=1)
+        ]
+
+        # The DRAWING INDEX sheet(s) = drawings whose Description 1 marks them as the index.
+        marker = wdp_writer.INDEX_DESC_MARKER.upper()
+        index_dwgs = [d for d in drawings if marker in (d["description"] or "").upper()]
+        if not index_dwgs:
+            return jsonify({"ok": False, "error": (
+                "No DRAWING INDEX sheet found in the project. The index sheet must be a General "
+                "sheet whose Drawing Properties Description 1 is 'DRAWING INDEX'. Add/label one "
+                "and try again.")})
+
+        cap = wdp_writer.INDEX_ROW_CAPACITY
+        sheet_no_by_dno = {r["drawing_no"]: r["sheet_no"] for r in rows}
+        warnings, payload, n = [], [], len(index_dwgs)
+        for i, d in enumerate(index_dwgs):
+            slice_rows = rows[i * cap:] if i == n - 1 else rows[i * cap:(i + 1) * cap]
+            if i == n - 1 and len(slice_rows) > cap:
+                need = -(-len(rows) // cap)          # ceil: index pages the list actually needs
+                warnings.append(
+                    f"{len(rows)} drawings but only {n} DRAWING INDEX sheet(s) available -- the "
+                    f"last index sheet holds {len(slice_rows)} rows and may overflow its border. "
+                    f"Add {max(0, need - n)} more index sheet(s) (or regenerate the project) so "
+                    f"the list fits.")
+            payload.append({
+                "path": os.path.join(output_folder, d["filename"]),
+                "drawing_no": d["drawing_no"],
+                "sheet_number": sheet_no_by_dno.get(d["drawing_no"]),
+                "rows": slice_rows,
+            })
+
+        warnings += autocad_bridge.populate_drawing_index(payload, None)
+        return jsonify({"ok": True, "success": True, "warnings": warnings,
+                        "drawings": len(drawings), "index_pages": n, "wdp_path": wdp_path})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
 
 
 # â”€â”€ Wire Labels â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€

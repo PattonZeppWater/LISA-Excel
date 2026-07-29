@@ -243,6 +243,47 @@ export async function generateIdpDwg(payload, signal) {
   }
 }
 
+// Assemble the full AIC project ONCE, after every conduit is generated: fill the GENERAL
+// sheet title blocks, populate the drawing index (with continuation sheets when it overflows),
+// and write the .wdp/.aepx. Called once at the end of Generate All / Generate from list (and
+// after a standalone single-conduit generate). Mirrors generateIdpDwg's { ok, data } shape.
+export async function finalizeIdpProject(payload, signal) {
+  try {
+    const res = await fetch('/api/idp-gen/finalize-project', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+      signal,
+    })
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Finalize failed' }))
+      return { ok: false, error: err.error || 'Finalize failed' }
+    }
+    return { ok: true, data: await res.json() }
+  } catch (e) {
+    if (e && e.name === 'AbortError') return { ok: false, aborted: true, error: 'Stopped' }
+    return { ok: false, error: 'Could not reach IDP_Generation. Is the service running?' }
+  }
+}
+
+// Rebuild the DRAWING INDEX table straight from a project .wdp the user picks (native file
+// dialog on the backend). Independent of the loaded workbook, so drawings added manually in
+// ACADE are picked up. Returns { ok, warnings, drawings, index_pages } | { cancelled } | { error }.
+export async function reindexIdpDrawingIndex() {
+  try {
+    const res = await fetch('/api/idp-gen/reindex-drawing-index', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) return { ok: false, error: data.error || 'Reindex failed' }
+    return data
+  } catch {
+    return { ok: false, error: 'Could not reach IDP_Generation. Is the service running?' }
+  }
+}
+
 export async function downloadIdpWorkbook(payload) {
   try {
     const res = await fetch('/api/idp-gen/download', {

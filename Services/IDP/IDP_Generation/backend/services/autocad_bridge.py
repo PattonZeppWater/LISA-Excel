@@ -291,11 +291,51 @@ def _pt(x: float, y: float, z: float = 0.0):
 # another is mid-clear).  Serialize all generation through this lock.
 _GEN_LOCK = threading.Lock()
 
-# How many times (2s apart) to retry a COM call AutoCAD rejected because it's busy
-# (mid-command, or the moment a dialog is closing). 20 tries = ~40s -- generous enough
-# for a heavily-loaded session with several drawings open at once, since each one adds
-# to how long AutoCAD can stay non-quiescent.
-_ACAD_CONNECT_RETRIES = 20
+# How many times to retry a COM call AutoCAD rejected because it's busy (mid-command, or the
+# moment a dialog is closing). Tuned for speed: 15 tries x ~1s = ~15s window (was 20 x 2s =
+# ~40s). Enough to ride out the brief busy window between sheets on a single idle AutoCAD;
+# override with IDP_ACAD_CONNECT_RETRIES / IDP_ACAD_CONNECT_DELAY if a heavily-loaded session
+# (several drawings / a second AutoCAD.exe) needs the old, more forgiving window back.
+_ACAD_CONNECT_RETRIES = int(os.getenv("IDP_ACAD_CONNECT_RETRIES", "15"))
+_ACAD_CONNECT_DELAY   = float(os.getenv("IDP_ACAD_CONNECT_DELAY", "1.0"))
+
+# Cached AutoCAD Application COM handle, reused across every sheet of a Generate All so we
+# don't GetActiveObject + revalidate from scratch on each drawing. Revalidated cheaply
+# (Version) on each use and transparently reconnected if it went stale.
+_ACAD_APP = None
+
+
+def _connect_acad(retries: int = None, delay: float = None):
+    """GetActiveObject the running AutoCAD, retrying while it's momentarily unreachable.
+    Returns (app, err). GetActiveObject can only ever reach ONE AutoCAD instance."""
+    retries = _ACAD_CONNECT_RETRIES if retries is None else retries
+    delay = _ACAD_CONNECT_DELAY if delay is None else delay
+    app, err = None, None
+    for _ in range(max(1, retries)):
+        try:
+            app = win32com.client.GetActiveObject("AutoCAD.Application")
+            _ = str(app.Version)
+            return app, None
+        except Exception as e:
+            app, err = None, e
+            time.sleep(delay)
+    return None, err
+
+
+def _get_acad_app(force: bool = False):
+    """Return a reused AutoCAD Application handle so a batch doesn't reconnect per sheet.
+    Revalidates the cached handle (Version) and transparently reconnects if AutoCAD was
+    closed/reopened. `force=True` drops the cache and reconnects. Returns (app, err)."""
+    global _ACAD_APP
+    if not force and _ACAD_APP is not None:
+        try:
+            _ = str(_ACAD_APP.Version)
+            return _ACAD_APP, None
+        except Exception:
+            _ACAD_APP = None
+    app, err = _connect_acad()
+    _ACAD_APP = app
+    return app, err
 
 
 def _acad_busy_hint(msg: str) -> str:
@@ -336,7 +376,7 @@ def _is_busy_error(e) -> bool:
             or "server is busy" in s or "call was rejected" in s)
 
 
-def _com_retry(fn, tries=8, delay=0.4, any_error=False):
+def _com_retry(fn, tries=8, delay=0.25, any_error=False):
     """Run fn(); if it raises a transient 'AutoCAD busy' COM error, wait and retry up to
     `tries` times. Re-raises the last error if none succeed; a non-busy error is raised
     immediately (not retried).
@@ -359,11 +399,18 @@ def _com_retry(fn, tries=8, delay=0.4, any_error=False):
         raise last
 
 
-def _wait_quiescent(app, timeout=15.0):
+_WAIT_QUIESCENT_TIMEOUT = float(os.getenv("IDP_WAIT_QUIESCENT_TIMEOUT", "6.0"))
+
+
+def _wait_quiescent(app, timeout=None):
     """Poll until AutoCAD reports it's idle, or timeout. Best-effort -- never raises.
-    Called before each sheet so a rapid Generate All doesn't start hammering AutoCAD
-    while it's still finishing the previous drawing (the main source of 'Call was
-    rejected by callee')."""
+    Called before each sheet so a rapid Generate All doesn't start hammering AutoCAD while
+    it's still finishing the previous drawing (the main source of 'Call was rejected by
+    callee'). Returns fast the instant AutoCAD is idle; the timeout only caps how long we
+    wait when it stays busy. Trimmed to ~6s (was 15s) for speed -- if it's still busy after
+    that, the per-call _com_retry backstops the actual COM calls. Override with
+    IDP_WAIT_QUIESCENT_TIMEOUT."""
+    timeout = _WAIT_QUIESCENT_TIMEOUT if timeout is None else timeout
     deadline = time.time() + timeout
     while time.time() < deadline:
         try:
@@ -371,11 +418,12 @@ def _wait_quiescent(app, timeout=15.0):
                 return True
         except Exception:
             pass
-        time.sleep(0.3)
+        time.sleep(0.2)
     return False
 
 
 _SHEET_RETRIES = 3   # whole-sheet attempts before giving up
+_SHEET_RETRY_DELAY = float(os.getenv("IDP_SHEET_RETRY_DELAY", "1.0"))   # was 2.0
 
 
 def generate_dwg(*args, **kwargs) -> dict:
@@ -395,7 +443,7 @@ def generate_dwg(*args, **kwargs) -> dict:
             if attempt < _SHEET_RETRIES - 1:
                 _log(f"generate_dwg: sheet failed ({r.get('error')!r}); re-rendering the "
                      f"whole sheet (attempt {attempt + 2}/{_SHEET_RETRIES})")
-                time.sleep(2.0)
+                time.sleep(_SHEET_RETRY_DELAY)
         return r
 
 
@@ -1101,15 +1149,9 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
     # drawings open, each its own process) automation calls can land on an instance
     # that's mid-command and never quiesce for the whole retry window, so the error
     # below spells out that specific, actionable cause rather than a bare COM error.
-    acad_app, _conn_err = None, None
-    for _attempt in range(_ACAD_CONNECT_RETRIES):
-        try:
-            acad_app = win32com.client.GetActiveObject("AutoCAD.Application")
-            _ = str(acad_app.Version)
-            break
-        except Exception as e:
-            acad_app, _conn_err = None, e
-            time.sleep(2)
+    # Reuse the cached AutoCAD handle across sheets (a Generate All doesn't reconnect every
+    # drawing); it revalidates cheaply and reconnects transparently if AutoCAD went stale.
+    acad_app, _conn_err = _get_acad_app()
     if acad_app is None:
         return _err(_acad_busy_hint(f"AutoCAD not running or not accessible: {_conn_err}"))
     _log(f"  AutoCAD version: {acad_app.Version}")
@@ -1143,14 +1185,16 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             break
         except Exception as e:
             doc, _open_err = None, e
-            time.sleep(2)
-            try:
-                acad_app = win32com.client.GetActiveObject("AutoCAD.Application")
-            except Exception:
-                pass
+            time.sleep(_ACAD_CONNECT_DELAY)
+            acad_app, _ = _get_acad_app(force=True)   # reconnect if the handle dropped
+            if acad_app is None:
+                break
     if doc is None:
         return _err(_acad_busy_hint(f"Failed to open template '{template_path}': {_open_err}"))
-    time.sleep(1.5)
+    # Brief settle after Open before touching the doc. We already waited for AutoCAD to go
+    # quiescent before opening (and every COM call below is _com_retry-wrapped), so a long
+    # fixed pause here is wasted on every sheet -- 0.4s is enough to let the doc register.
+    time.sleep(0.4)
     model = doc.ModelSpace
     _log(f"  Opened template copy — doc: {doc.Name}")
 
@@ -1438,15 +1482,7 @@ def fill_general_titleblocks(items: list, project_desc: dict | None = None) -> l
         return warnings
     base_vals = _project_line_values(project_desc)
     try:
-        acad_app = None
-        for _ in range(_ACAD_CONNECT_RETRIES):
-            try:
-                acad_app = win32com.client.GetActiveObject("AutoCAD.Application")
-                _ = str(acad_app.Version)
-                break
-            except Exception:
-                acad_app = None
-                time.sleep(2)
+        acad_app, _ = _get_acad_app()
         if acad_app is None:
             warnings.append("General sheets: AutoCAD not accessible; title blocks left as template.")
             return warnings
@@ -1483,6 +1519,161 @@ def fill_general_titleblocks(items: list, project_desc: dict | None = None) -> l
                         pass
     except Exception as ex:
         warnings.append(f"General sheets: title-block update failed ({ex}).")
+    return warnings
+
+
+# Header row of the drawing-index table (matches the template's G2 AcDbTable).
+_INDEX_TABLE_HEADER = ["SHEET NO.", "DRAWING NO.", "SECTION", "DRAWING DESCRIPTION"]
+
+# Drawing-index table cell formatting. Text is auto-sized DOWN from _INDEX_TEXT_H_MAX so the
+# longest string in each column fits on ONE line (no wrapping = uniform single-height rows),
+# clamped to _INDEX_TEXT_H_MIN so it never turns microscopic. _INDEX_CHAR_W_AT_1 is a
+# conservative per-character glyph advance at text height 0.1 for the template's Standard
+# style (measured ~0.084-0.095/char; the high value slightly overestimates width so text
+# always fits). Alignment matches the template: SHEET/DRAWING/SECTION centered, description
+# left. AutoCAD AcCellAlignment: 4 = MiddleLeft, 5 = MiddleCenter.
+_INDEX_TEXT_H_MAX   = 0.10
+_INDEX_TEXT_H_MIN   = 0.055
+_INDEX_CHAR_W_AT_1  = 0.095
+_INDEX_ROW_HEIGHT   = 0.2533
+_INDEX_CELL_MARGIN  = 0.06
+_ALIGN_MIDDLE_LEFT  = 4
+_ALIGN_MIDDLE_CENTER = 5
+
+
+def _find_index_table(doc):
+    """The first AcDbTable in a drawing-index sheet's model space (the DRAWING INDEX table),
+    or None. The index table is the only AcDbTable on the G2 sheet."""
+    for e in doc.ModelSpace:
+        try:
+            if e.ObjectName == "AcDbTable":
+                return e
+        except Exception:
+            continue
+    return None
+
+
+def _index_fit_text_height(data_rows: list, colw: list, hmargin: float) -> float:
+    """Largest uniform text height at which the longest string in every column still fits on
+    one line (so no row wraps to double height), clamped to [_INDEX_TEXT_H_MIN, _MAX]."""
+    h = _INDEX_TEXT_H_MAX
+    for c in range(len(colw)):
+        maxlen = max([len(row[c]) for row in data_rows] or [0])
+        if maxlen <= 0:
+            continue
+        usable = max(0.1, colw[c] - 2 * hmargin)
+        fit = usable * 0.1 / (_INDEX_CHAR_W_AT_1 * maxlen)
+        if fit < h:
+            h = fit
+    return max(_INDEX_TEXT_H_MIN, min(_INDEX_TEXT_H_MAX, h))
+
+
+def _fill_index_table(table, rows: list, warnings: list) -> None:
+    """Resize the DRAWING INDEX AcDbTable to one header + len(rows) data rows, write every
+    cell, and format it to match the AIC standard index: uniform single-height rows (text
+    auto-sized so nothing wraps), SHEET/DRAWING/SECTION centered, description left-aligned.
+    Grows/shrinks by insert/delete so any project size fits. COM calls are retried (any_error)
+    since AcadTable dispatch can transiently hiccup on a busy session."""
+    ncols = int(_com_retry(lambda: table.Columns))
+    try:
+        colw = [float(_com_retry(lambda c=c: table.GetColumnWidth(c))) for c in range(ncols)]
+    except Exception:
+        colw = [1.22, 1.42, 1.72, 3.02][:ncols]
+    try:
+        hmargin = float(table.HorzCellMargin) or _INDEX_CELL_MARGIN
+    except Exception:
+        hmargin = _INDEX_CELL_MARGIN
+
+    data = [[str(r.get("sheet_no", "") or ""), str(r.get("drawing_no", "") or ""),
+             str(r.get("section", "") or ""), str(r.get("description", "") or "")][:ncols]
+            for r in rows]
+    text_h = _index_fit_text_height(data, colw, hmargin)
+
+    # Resize to header + data.
+    target = 1 + len(data)
+    cur = int(_com_retry(lambda: table.Rows))
+    if target > cur:
+        rh = _com_retry(lambda: table.GetRowHeight(cur - 1))
+        _com_retry(lambda: table.InsertRows(cur, rh, target - cur), any_error=True)
+    elif target < cur:
+        _com_retry(lambda: table.DeleteRows(target, cur - target), any_error=True)
+
+    # Header text (keep the template's header height/alignment).
+    for c in range(min(ncols, len(_INDEX_TABLE_HEADER))):
+        htext = _INDEX_TABLE_HEADER[c]
+        _com_retry(lambda c=c, htext=htext: table.SetText(0, c, htext), any_error=True)
+
+    # Data cells: text + uniform fit height + alignment. (Newly inserted rows otherwise
+    # default to center alignment / the template height, so set every data cell explicitly.)
+    shrink = text_h < _INDEX_TEXT_H_MAX - 1e-6
+    for i, row in enumerate(data, start=1):
+        for c in range(ncols):
+            val = row[c]
+            _com_retry(lambda i=i, c=c, val=val: table.SetText(i, c, val), any_error=True)
+            if shrink:
+                _com_retry(lambda i=i, c=c: table.SetCellTextHeight(i, c, text_h), any_error=True)
+            align = _ALIGN_MIDDLE_LEFT if c == 3 else _ALIGN_MIDDLE_CENTER
+            _com_retry(lambda i=i, c=c, align=align: table.SetCellAlignment(i, c, align), any_error=True)
+
+    # Normalize every row to a single uniform height now that nothing should wrap.
+    for r in range(target):
+        _com_retry(lambda r=r: table.SetRowHeight(r, _INDEX_ROW_HEIGHT), any_error=True)
+
+
+def populate_drawing_index(index_pages: list, project_desc: dict | None = None) -> list:
+    """Fill the DRAWING INDEX sheet(s) of a project. Each index page's table lists every
+    drawing in the deliverable, split across pages when the list overflows one sheet.
+
+    `index_pages` is a list of dicts, one per index sheet, in page order:
+        {"path", "drawing_no", "sheet_number", "rows": [ {sheet_no, drawing_no, section,
+         description}, ... ]}
+    For each page: open the DWG in the running AutoCAD, write its title block (project lines +
+    DRAWING_NO + SHEET, leaving DESC1='DRAWING INDEX' / SECTION='GENERAL' from the template),
+    fill its AcDbTable with that page's row slice, save and close. One AutoCAD connection is
+    reused across all pages. Best-effort: returns a list of warning strings, never raises."""
+    warnings = []
+    pages = [p for p in (index_pages or []) if p and p.get("path") and os.path.exists(p["path"])]
+    if not pages:
+        return warnings
+    base_vals = _project_line_values(project_desc)
+    try:
+        acad_app, _ = _get_acad_app()
+        if acad_app is None:
+            warnings.append("Drawing index: AutoCAD not accessible; index table left as template.")
+            return warnings
+        _wait_quiescent(acad_app)
+        for pg in pages:
+            path = pg["path"]
+            doc = None
+            try:
+                _close_if_open(acad_app, path)
+                doc = _com_retry(lambda: acad_app.Documents.Open(path), any_error=True)
+                # Title block (same tags fill_general_titleblocks writes for other generals).
+                vals = dict(base_vals)
+                if str(pg.get("drawing_no") or "").strip():
+                    vals["DRAWING_NO"] = str(pg["drawing_no"]).strip()
+                if str(pg.get("sheet_number") or "").strip():
+                    vals["SHEET"] = str(pg["sheet_number"]).strip()
+                _set_title_block_attrs(doc, vals, warnings)
+                # Index table.
+                table = _find_index_table(doc)
+                if table is None:
+                    warnings.append(f"Drawing index {os.path.basename(path)}: no index table found; skipped.")
+                else:
+                    _fill_index_table(table, pg.get("rows") or [], warnings)
+                _com_retry(lambda: doc.SaveAs(path), tries=3, delay=0.5, any_error=True)
+                _log(f"  drawing index filled: {os.path.basename(path)} "
+                     f"({len(pg.get('rows') or [])} row(s), SHEET={pg.get('sheet_number')})")
+            except Exception as ex:
+                warnings.append(f"Drawing index {os.path.basename(path)}: not populated ({ex}).")
+            finally:
+                if doc is not None:
+                    try:
+                        _com_retry(lambda: doc.Close(False), any_error=True)
+                    except Exception:
+                        pass
+    except Exception as ex:
+        warnings.append(f"Drawing index: population failed ({ex}).")
     return warnings
 
 

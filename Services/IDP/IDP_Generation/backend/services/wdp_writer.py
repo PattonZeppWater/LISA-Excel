@@ -273,31 +273,22 @@ def _find_template_file(pattern: str):
 GENERAL_SHEET_COUNT = len(_GENERAL_SHEETS)
 
 
-def ensure_project_sheets(output_folder: str, project_number: str) -> list:
-    """Copy the GENERAL template sheets (G1-G3) into output_folder renamed to the project
-    number, plus the title-block map (.wdl -> <project>_wdtitle.wdl) and drawing template
-    (.wdt). Copy-if-missing, so it's safe to call once per conduit.
-
-    Returns a list of (dst_name, sheet_number, drawing_no, newly_copied) for each GENERAL
-    sheet now present, in cover->index->legend order (sheet_number 1,2,3; drawing_no is the
-    filename stem, e.g. '73.1159-G1'). `newly_copied` is True only on the call that first
-    created the file, so the caller can fill its title block exactly once. Never raises."""
+def ensure_project_sheets(output_folder: str, project_number: str, conduit_index=None) -> list:
+    """Copy the GENERAL template sheets into output_folder named per IC.EDC.S011
+    (<project>-G.NN.dwg: cover = G.01, drawing-index page(s) = G.02.., legend = last), plus the
+    title-block map (.wdl -> <project>_wdtitle.wdl) and the drawing template (.wdt).
+    Copy-if-missing. Returns the sheet plan (see project_sheet_plan) so the caller can fill each
+    general sheet's title block. Never raises."""
     safe = _safe(project_number)
-    general = []
+    plan, _pages = project_sheet_plan(project_number, conduit_index)
     try:
         if not output_folder or not os.path.isdir(output_folder):
-            return general
-        for i, (suf, _label) in enumerate(_GENERAL_SHEETS, start=1):
-            src = _find_template_file("*-%s.dwg" % suf)
-            dst_name = "%s-%s.dwg" % (safe, suf)
-            dst = os.path.join(output_folder, dst_name)
-            newly = False
+            return plan
+        for g in plan:
+            src = _find_template_file("*-%s.dwg" % g["template_suffix"])
+            dst = os.path.join(output_folder, g["name"])
             if src and not os.path.exists(dst):
                 shutil.copyfile(src, dst)
-                newly = True
-            if os.path.exists(dst):
-                general.append((dst_name, i, os.path.splitext(dst_name)[0], newly))
-        # (wdl/wdt copy continues below)
         wdl = _find_template_file("*_wdtitle.wdl") or _find_template_file("*.wdl")
         if wdl:
             dst = os.path.join(output_folder, "%s_wdtitle.wdl" % safe)
@@ -310,7 +301,7 @@ def ensure_project_sheets(output_folder: str, project_number: str) -> list:
                 shutil.copyfile(wdt, dst)
     except Exception:
         pass
-    return general
+    return plan
 
 
 # Sidecar recording which project info the GENERAL sheet title blocks were last filled
@@ -372,15 +363,238 @@ def mark_general_titleblocks_filled(output_folder, project_number, project_desc,
         pass
 
 
+# ============================================================================
+# Drawing INDEX (G2) -- row list + multi-page (continuation) numbering
+# ============================================================================
+
+# How many DATA rows (drawings) fit under the header on ONE index sheet before the table
+# would run past the index-sheet border. The G2 table starts high on the sheet (top row at
+# Y~7.42) with 0.2533"-tall rows; 22 data rows keep the bottom of the table safely above the
+# border. Kept conservative on purpose -- overflow just spills onto a continuation index
+# sheet, so a slightly-low value only means an extra index page, never a clipped table.
+INDEX_ROW_CAPACITY = int(os.getenv("IDP_INDEX_ROW_CAPACITY", "22"))
+
+
+def _seq_start(row) -> int | None:
+    """This conduit's project-sequential start sheet (1-based across conduits), or None."""
+    try:
+        v = row.get("Seq_Start")
+        return int(v) if v is not None and str(v).strip() != "" else None
+    except (ValueError, TypeError):
+        return None
+
+
+def _sheet_count(row) -> int:
+    """How many sheets this conduit occupies (1 + continuations). Defaults to 1."""
+    try:
+        return max(1, int(row.get("Sheet_Count") or 1))
+    except (ValueError, TypeError):
+        return 1
+
+
+def _total_conduit_sheets(conduit_index) -> int:
+    """Total conduit sheets across the whole workbook (each conduit's continuations
+    included)."""
+    return sum(_sheet_count(r) for r in (conduit_index or []))
+
+
+def index_page_count(total_conduit_sheets: int) -> int:
+    """How many index (G2) sheets the drawing index needs.
+
+    The index lists EVERY sheet in the deliverable -- cover (1) + the index pages themselves
+    + legend (1) + every conduit sheet -- so the page count is mildly self-referential (more
+    index pages means more rows to list). Solve the fixed point: rows = 2 + pages + conduits;
+    pages = ceil(rows / capacity). Converges in a couple of iterations. Always >= 1."""
+    cap = max(1, INDEX_ROW_CAPACITY)
+    c = max(0, int(total_conduit_sheets or 0))
+    pages = 1
+    for _ in range(8):
+        rows = 2 + pages + c                      # cover + index pages + legend + conduits
+        nxt = max(1, -(-rows // cap))             # ceil division
+        if nxt == pages:
+            break
+        pages = nxt
+    return pages
+
+
+def project_general_offset(conduit_index) -> int:
+    """Number of GENERAL sheets that lead the deliverable (cover + index page(s) + legend),
+    i.e. how much conduit sheet numbers are offset. Reduces to 3 (today's cover/index/legend)
+    when the index fits on one page. Both /generate and the finalize pass call this so
+    conduit numbering and the index agree."""
+    return 2 + index_page_count(_total_conduit_sheets(conduit_index))
+
+
+# Sheet-category letters from IC.EDC.S011 Table 1. General and Interconnect-Diagram (IDP)
+# sheets take NO scope-of-work number, so their drawing numbers are <project>-<CAT>.<NN>.
+_CAT_GENERAL = "G"
+_CAT_IDP     = "D"   # Interconnect Diagram = the IDP sheets this tool produces
+
+
+def _general_drawing_no(safe: str, n: int) -> str:
+    """IC.EDC.S011 General-sheet drawing number: <project>-G.NN (2-digit, no SOW). Because the
+    General sheets lead the deliverable, a General sheet's category index equals its running
+    sheet number (cover = G.01, drawing index = G.02, ...)."""
+    return "%s-%s.%02d" % (safe, _CAT_GENERAL, int(n))
+
+
+def conduit_drawing_no(project_number: str, index: int) -> str:
+    """IC.EDC.S011 IDP (Interconnect Diagram) drawing number: <project>-D.NN (2-digit, no SOW).
+    `index` is the drawing's position among the project's conduit sheets (1-based, continuation
+    sheets included) -- the Interconnect-Diagram category keeps its OWN index starting at 01,
+    independent of how many General sheets lead the set."""
+    return "%s-%s.%02d" % (_safe(project_number), _CAT_IDP, int(index))
+
+
+def project_sheet_plan(project_number: str, conduit_index) -> tuple[list, int]:
+    """Ordered GENERAL-sheet plan for a project, numbered per IC.EDC.S011 (<project>-G.NN) and
+    accounting for however many index (continuation) pages the drawing index needs.
+
+    Returns (plan, index_pages) where plan is a list of dicts:
+        {template_suffix, name, drawing_no, sheet_number, label, is_index, index_page}
+    in deliverable order: cover (G.01) -> index page(s) (G.02, G.03, ...) -> legend. `name` is
+    the OUTPUT filename (<project>-G.NN.dwg); `template_suffix` (G1/G2/G3) selects which bundled
+    template the sheet is copied from. Conduit sheets follow with their own D.NN numbering."""
+    safe = _safe(project_number)
+    pages = index_page_count(_total_conduit_sheets(conduit_index))
+    plan = []
+    n = 1
+
+    def _entry(template_suffix, label, is_index, index_page):
+        nonlocal n
+        dno = _general_drawing_no(safe, n)
+        e = {"template_suffix": template_suffix, "name": "%s.dwg" % dno, "drawing_no": dno,
+             "sheet_number": n, "label": label, "is_index": is_index, "index_page": index_page}
+        n += 1
+        return e
+
+    plan.append(_entry("G1", "COVER SHEET", False, None))
+    for p in range(pages):
+        plan.append(_entry("G2", "DRAWING INDEX", True, p))
+    plan.append(_entry("G3", "SYMBOLS LEGEND", False, None))
+    return plan, pages
+
+
+def _existing_general_sheets(output_folder: str, safe: str) -> list:
+    """General-category sheet filenames (<safe>-G.NN.dwg) present in the output folder, sorted
+    by their NN index."""
+    def _idx(nm):
+        try:
+            return int(os.path.splitext(nm)[0].rsplit(".", 1)[-1])
+        except (ValueError, IndexError):
+            return 0
+    names = [os.path.basename(p) for p in glob.glob(os.path.join(output_folder, "%s-G.*.dwg" % safe))]
+    return sorted(names, key=_idx)
+
+
+def _conduit_desc_for(row, dwg_name, descriptions) -> str:
+    """Drawing-index description for a conduit sheet: the drawing's Drawing Properties
+    Description 1/2/3 (Conduit name / Source Name 1 / Destination Name 1), the same lines the
+    .wdp records for the drawing, joined with a space. Blank lines are dropped so a drawing
+    with only Description 1 reads cleanly. Values come from the recorded descriptions or, if
+    those weren't stored, the conduit row's own fields."""
+    entry = descriptions.get(dwg_name) or {}
+    d1 = str(entry.get("desc1") or row.get("Cdt_Name") or row.get("Cond_Tag") or "").strip()
+    d2 = str(entry.get("desc2") or row.get("Src_Name01") or "").strip()
+    d3 = str(entry.get("desc3") or row.get("Dst_Name01") or "").strip()
+    return " ".join(p for p in (d1, d2, d3) if p)
+
+
+def build_index_rows(output_folder: str, project_number: str, conduit_index,
+                     file_suffix: str = "e") -> tuple[list, int]:
+    """Build the full ordered drawing-index row list for the project, matching exactly the
+    numbering /generate assigns. Returns (rows, index_pages), where each row is a dict:
+        {sheet_no, drawing_no, section, description}
+    Rows are: cover / index page(s) / legend (GENERAL, from the sheet plan) followed by every
+    conduit sheet (INTERCONNECTION DIAGRAMS), in Seq_Start order, with continuation sheets of
+    a conduit taking the next consecutive drawing numbers -- the same formula generate.py uses
+    for filenames and sheet numbers. Never raises (returns ([], 1) on trouble)."""
+    try:
+        plan, pages = project_sheet_plan(project_number, conduit_index)
+        offset = 2 + pages
+        descriptions = _load_dwg_descriptions(output_folder)
+        rows = []
+        for g in plan:
+            rows.append({"sheet_no": g["sheet_number"], "drawing_no": g["drawing_no"],
+                         "section": "GENERAL", "description": g["label"]})
+        conduits = [r for r in (conduit_index or []) if _seq_start(r) is not None]
+        conduits.sort(key=lambda r: _seq_start(r))
+        for r in conduits:
+            seq = _seq_start(r)
+            for k in range(_sheet_count(r)):
+                idx = seq + k                       # 1-based conduit-sheet index -> D.NN
+                dno = conduit_drawing_no(project_number, idx)
+                name = dno + ".dwg"
+                desc = _conduit_desc_for(r, name, descriptions)
+                if k > 0:
+                    desc = (desc + " (CONT.)").strip()
+                rows.append({"sheet_no": offset + idx, "drawing_no": dno,
+                             "section": _ICD_SECTION, "description": desc})
+        return rows, pages
+    except Exception:
+        return [], 1
+
+
+# Marker text that identifies a drawing as the DRAWING INDEX sheet (its Drawing Properties
+# Description 1). Used when rebuilding the index straight from a .wdp.
+INDEX_DESC_MARKER = "DRAWING INDEX"
+
+
+def parse_wdp(wdp_path: str) -> list:
+    """Parse an AutoCAD Electrical .wdp project file into an ordered list of its drawings --
+    every drawing the project contains, whether LISA generated it or it was added manually in
+    ACADE. Returns a list of dicts, in project order:
+        {filename, drawing_no, section, description}
+    where `section` is the drawing's subsection (=====SUB=, e.g. GENERAL / INTERCONNECTION
+    DIAGRAMS) and `description` is its Drawing Properties Description 1/2/3 (the '===' lines)
+    joined with a space. Reads the .wdp as it exists on disk, so it reflects manual additions.
+    Never raises (returns [] on trouble)."""
+    try:
+        with open(wdp_path, "r", encoding="utf-8-sig", errors="replace") as f:
+            raw = f.read()
+    except Exception:
+        return []
+    out, section, sub, descs = [], "", "", []
+    for line in raw.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("====="):                    # =====SUB=NAME (subsection marker)
+            if "SUB=" in s:
+                sub = s.split("SUB=", 1)[1].strip()
+            continue
+        if s.startswith("==="):                       # ===Description N line
+            descs.append(s[3:].strip())
+            continue
+        if s.startswith("="):                         # =SECTION (resets subsection + pending descs)
+            section, sub, descs = s[1:].strip(), "", []
+            continue
+        if s[0] in "*+?#@":                            # header / settings markers -- not a drawing
+            descs = []
+            continue
+        # Anything else is a drawing entry (a filename on its own line).
+        fname = os.path.basename(s)
+        if fname.lower().endswith(".dwg"):
+            out.append({
+                "filename": fname,
+                "drawing_no": os.path.splitext(fname)[0],
+                "section": sub or section or "",
+                "description": " ".join(d for d in descs if d),
+            })
+        descs = []
+    return out
+
+
 def write_full_project_wdp(output_folder: str, project_number: str, project_info=None,
-                            valid_cond_tags=None) -> str | None:
+                            valid_cond_tags=None, conduit_index=None) -> str | None:
     """Write '<project_number>.wdp' as a full sectioned AIC project: the GENERAL sheets
-    (G1-G3 with COVER SHEET / DRAWING INDEX / SYMBOLS LEGEND labels) followed by every
-    CURRENT-WORKBOOK conduit drawing under INTERCONNECTION DIAGRAMS -- see _workbook_dwgs;
-    pass valid_cond_tags (every Cond_Tag currently in ConduitIndex) so a stray .dwg left in
-    the output folder by a different project/run, or by a conduit since removed from this
-    workbook, is never listed. Descriptor fields come from the Project Description sheet.
-    Returns the path or None (never raises)."""
+    (<project>-G.NN with COVER SHEET / DRAWING INDEX / SYMBOLS LEGEND labels, including any
+    drawing-index continuation pages) followed by every CURRENT-WORKBOOK conduit drawing under
+    INTERCONNECTION DIAGRAMS -- see _workbook_dwgs; pass valid_cond_tags (every Cond_Tag
+    currently in ConduitIndex) so a stray .dwg left in the output folder by a different
+    project/run, or by a conduit since removed from this workbook, is never listed. Pass
+    conduit_index so the GENERAL section lists the right number of index pages in order.
+    Descriptor fields come from the Project Description sheet. Returns the path or None."""
     try:
         if not output_folder or not os.path.isdir(output_folder):
             return None
@@ -388,11 +602,11 @@ def write_full_project_wdp(output_folder: str, project_number: str, project_info
         body = _load_header(_field_map(project_number, project_info))
 
         general_names = set()
-        for suf, label in _GENERAL_SHEETS:
-            name = "%s-%s.dwg" % (safe, suf)
-            general_names.add(name.lower())
-            if os.path.exists(os.path.join(output_folder, name)):
-                body += _block("GENERAL", name, {"desc1": label})
+        plan, _pages = project_sheet_plan(project_number, conduit_index)
+        for g in plan:
+            general_names.add(g["name"].lower())
+            if os.path.exists(os.path.join(output_folder, g["name"])):
+                body += _block("GENERAL", g["name"], {"desc1": g["label"]})
 
         # INTERCONNECTION DIAGRAMS = every current-workbook conduit dwg, labeled with each
         # conduit's own Description 1/2/3 (Conduit name / Source Name 1 / Destination Name
@@ -421,10 +635,7 @@ def write_project_aepx(output_folder: str, project_number: str, valid_cond_tags=
         if not output_folder or not os.path.isdir(output_folder):
             return None
         safe = _safe(project_number)
-        general = {
-            "%s-%s.dwg" % (safe, suf) for suf, _label in _GENERAL_SHEETS
-            if os.path.exists(os.path.join(output_folder, "%s-%s.dwg" % (safe, suf)))
-        }
+        general = set(_existing_general_sheets(output_folder, safe))   # <proj>-G.NN.dwg
         conduits = _workbook_dwgs(output_folder, valid_cond_tags, project_number)
         dwgs = sorted(general | {d for d in conduits if d not in general}, key=str.lower)
         entries = "".join(
