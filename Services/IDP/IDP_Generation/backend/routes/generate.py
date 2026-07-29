@@ -470,7 +470,13 @@ def generate():
             if to_fill:
                 gw = autocad_bridge.fill_general_titleblocks(to_fill, project_desc)
                 result["warnings"] = (result.get("warnings") or []) + gw
-                if not gw:   # only mark done when all sheets filled cleanly (else retry next run)
+                # Mark done so the REST of a Generate All doesn't re-open G1..G3 on every
+                # conduit -- the redundant per-drawing title-block work. Mark unless the only
+                # failures were transient "AutoCAD busy" hiccups (those deserve a retry on the
+                # next conduit); a persistent failure (e.g. a sheet that won't save) is marked
+                # anyway so we don't re-open + re-fail the general sheets 100 times over.
+                transient = any(autocad_bridge._is_busy_error(w) for w in gw)
+                if not transient:
                     wdp_writer.mark_general_titleblocks_filled(
                         output_folder, project_number, project_desc, general)
             result["wdp_path"]  = wdp_writer.write_full_project_wdp(

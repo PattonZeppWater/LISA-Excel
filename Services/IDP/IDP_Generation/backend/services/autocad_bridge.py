@@ -375,6 +375,22 @@ def _wait_quiescent(app, timeout=15.0):
     return False
 
 
+def _wait_doc_ready(app, doc, timeout=1.5):
+    """Poll until a just-opened document is usable -- model space reachable AND AutoCAD idle
+    -- returning the instant it's ready instead of paying a flat delay on every sheet. Caps
+    at `timeout` (so it's never slower than the old fixed wait) and never raises."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            _ = doc.ModelSpace.Count
+            if app.GetAcadState().IsQuiescent:
+                return True
+        except Exception:
+            pass
+        time.sleep(0.1)
+    return False
+
+
 _SHEET_RETRIES = 3   # whole-sheet attempts before giving up
 
 
@@ -1150,7 +1166,11 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
                 pass
     if doc is None:
         return _err(_acad_busy_hint(f"Failed to open template '{template_path}': {_open_err}"))
-    time.sleep(1.5)
+    # Wait for the freshly-opened doc to be usable, but only as long as needed. This used to
+    # be a flat time.sleep(1.5) on EVERY sheet (~1.5s x N sheets on a 100-conduit run); poll
+    # instead and proceed the instant model space is reachable and AutoCAD is idle. Capped at
+    # the old 1.5s so it is never slower, just usually faster.
+    _wait_doc_ready(acad_app, doc, timeout=1.5)
     model = doc.ModelSpace
     _log(f"  Opened template copy — doc: {doc.Name}")
 
@@ -1183,6 +1203,18 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             _log(f"  continuation sheet: state={cont_state} prev={cont_prev!r} next={cont_next!r}")
         _log(f"  layout plan: {len(plan.get('items', []))} block(s)")
         placed = render_plan(model, plan, warnings)
+
+        # Completeness check: every planned BLOCK (the conduit + each non-text item) should
+        # have landed. If fewer were placed, a block insert silently failed mid-render (a
+        # transient COM stall) and the sheet is incomplete -- raise so generate_dwg re-renders
+        # it from a fresh template copy instead of saving a partial drawing that reports
+        # success. MTEXT callouts aren't in `placed`, so they're excluded from the count.
+        expected_blocks = (1 if plan.get("conduit") else 0) + \
+            sum(1 for it in plan.get("items", []) if it.get("kind") != "mtext")
+        if len(placed) < expected_blocks:
+            raise RuntimeError(
+                "Sheet incomplete: %d of %d blocks placed (AutoCAD busy) — not saved"
+                % (len(placed), expected_blocks))
 
         # ── 8. Fill supporting documents + deviation-notes table ──────────────
         _log(f"  ref_doc_rows count={len(ref_doc_rows or [])}  dev_rows count={len(dev_rows or [])}")
