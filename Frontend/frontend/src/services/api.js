@@ -296,6 +296,21 @@ export async function exportIdpFillReport(payload) {
   }
 }
 
+export async function exportIdpWireLabelPrint(payload) {
+  try {
+    const res = await fetch('/api/idp-gen/wire-label-print', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    })
+    const data = await res.json().catch(() => ({}))
+    if (!res.ok) return { ok: false, error: data.error || 'Wire label print failed' }
+    return data
+  } catch {
+    return { ok: false, error: 'Could not reach IDP_Generation. Is the service running?' }
+  }
+}
+
 export async function downloadIdpWireLabels(fillIndex, filename) {
   try {
     const res = await fetch('/api/idp-gen/wire-labels', {

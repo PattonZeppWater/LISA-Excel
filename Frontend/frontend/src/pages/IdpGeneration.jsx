@@ -8,6 +8,7 @@ import {
   downloadIdpWorkbook,
   downloadIdpWireLabels,
   exportIdpFillReport,
+  exportIdpWireLabelPrint,
   downloadIdpTemplate,
   exportIdpConduitList,
 } from "../services/api";
@@ -698,6 +699,25 @@ export default function IdpGeneration() {
     setStatus({ type: "success", message: `Conduit fill report saved to: ${result.path}` });
   }
 
+  // ── Wire-label print report (Excel, matches the AutoCAD IDPWireLabelPrintExcel macro) ──
+
+  async function handleWireLabelPrint() {
+    if (!wb) return;
+    setLoading("wirelabelprint");
+    const result = await exportIdpWireLabelPrint({
+      fill_index: wb.fill_index,
+      filename: wb.filename,
+      default_dir: outputFolder || "",
+    });
+    setLoading(null);
+    if (result.cancelled) return;
+    if (!result.ok) {
+      setStatus({ type: "error", message: `Wire label print failed: ${result.error}` });
+      return;
+    }
+    setStatus({ type: "success", message: `Wire label print report saved to: ${result.path}` });
+  }
+
   // ── JSON paste / copy ────────────────────────────────────────────────────
 
   function handleCopyJson() {
@@ -1023,6 +1043,14 @@ export default function IdpGeneration() {
               title={"Download an Excel report of every conduit's NEC Chapter 9 fill %:\nraw fill % and % of the allowable limit, the conductor/cable breakdown, and which conduits are over-filled."}
             >
               {loading === "fillreport" ? "Building…" : "⬇ Fill % report (Excel)"}
+            </button>
+            <button
+              onClick={handleWireLabelPrint}
+              disabled={loading === "wirelabelprint"}
+              style={{ background: "none", border: "1px solid var(--border-strong)", color: "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: loading === "wirelabelprint" ? "default" : "pointer", fontSize: "0.75rem" }}
+              title={"Wire-label print report (matches the AutoCAD IDPWireLabelPrintExcel macro):\nunique wire labels grouped with a Qty, split into Standard (10/12/14/16/18/CAT6) and Other worksheets;\nlabels longer than 14 characters are highlighted yellow; %%C/%C shown as Ø."}
+            >
+              {loading === "wirelabelprint" ? "Building…" : "⬇ Wire label print (Excel)"}
             </button>
           </div>
           {jsonPasteOpen && (

@@ -789,6 +789,123 @@ def build_wire_labels(fill_index: list) -> bytes:
     return out.getvalue()
 
 
+# ── Wire-label PRINT export (parity with IDPWireLabelPrintExcel.lsp) ─────────────
+# The AutoLISP macro scans the generated DWGs for WIRE_IDP blocks and reads their
+# Src_Size / Src_WireLabel. LISA writes those same values from Wire{n}_Size /
+# Wire{n}_SrcLabel, so this builds the same report straight from the workbook's fill
+# index -- no AutoCAD needed. Parameters mirrored from the macro:
+#   * group wires by (size, wire label) and count Qty
+#   * two worksheets: "Standard Wires" (10/12/14/16/18 / CAT6) and "Other Wires"
+#   * yellow-highlight a wire label longer than 14 characters
+#   * replace the phase/diameter codes %%C and %C with the Ø symbol
+
+_STD_WIRE_SIZES = {"10", "12", "14", "16", "18", "CAT6", "CAT 6", "CATEGORY 6"}
+
+
+def _wlp_norm_size(s: str) -> str:
+    """Normalize a size for the Standard/Other split (matches the macro's normalizer)."""
+    x = str(s or "").upper()
+    for tok in ("GAUAGE", "GAUGE", "AWG", "#"):
+        x = x.replace(tok, "")
+    x = x.replace("-", " ").replace("_", " ")
+    return " ".join(x.split())
+
+
+def _wlp_is_standard(s: str) -> bool:
+    return _wlp_norm_size(s) in _STD_WIRE_SIZES
+
+
+def _wlp_label_display(s: str) -> str:
+    """Phase/diameter codes -> Ø (%%C first so a leftover % isn't left behind)."""
+    return str(s or "").replace("%%C", "Ø").replace("%C", "Ø")
+
+
+def build_wire_label_print(fill_index: list) -> bytes:
+    """Wire-label PRINT workbook (see IDPWireLabelPrintExcel.lsp parity notes above).
+    Groups each source wire (Wire{n}_SrcLabel / Wire{n}_Size, up to Wire_Count, skipping
+    'Blank'-mode wires) by (size, label) with a Qty, into Standard/Other worksheets."""
+    from collections import OrderedDict
+    from openpyxl.styles import Font, PatternFill, Border, Side, Alignment
+
+    wire_fields = [
+        ("Wire1_SrcLabel", "Wire1_Size", "WL1_Mode"),
+        ("Wire2_SrcLabel", "Wire2_Size", "WL2_Mode"),
+        ("Wire3_SrcLabel", "Wire3_Size", "WL3_Mode"),
+        ("Wire4_SrcLabel", "Wire4_Size", "WL4_Mode"),
+    ]
+    records = OrderedDict()   # (size, label) -> [size, label, qty]  (first-seen order)
+    for row in fill_index or []:
+        try:
+            wc = int(row.get("Wire_Count") or 0)
+        except (TypeError, ValueError):
+            wc = 0
+        for i, (lbl_f, size_f, mode_f) in enumerate(wire_fields):
+            if i >= wc:
+                break
+            if str(row.get(mode_f) or "").strip().upper() == "BLANK":
+                continue   # this wire prints no label
+            label = str(row.get(lbl_f) or "").strip()
+            size = str(row.get(size_f) or row.get("Wire_Size_Raw") or "").strip()
+            if not label or not size:
+                continue
+            key = (size, label)
+            if key in records:
+                records[key][2] += 1
+            else:
+                records[key] = [size, label, 1]
+
+    hdr_font = Font(bold=True)
+    hdr_fill = PatternFill("solid", fgColor="D9EAF7")
+    warn_fill = PatternFill("solid", fgColor="FFFF00")   # label > 14 chars
+    thin = Side(style="thin", color="BFBFBF")
+    border = Border(bottom=thin)
+    _KEY_NOTE = "Yellow highlight = wire label is longer than 14 characters."
+
+    wb = openpyxl.Workbook()
+
+    def _sheet(ws, standard: bool):
+        ws.column_dimensions["A"].width = 34
+        ws.column_dimensions["B"].width = 8
+        ws.column_dimensions["C"].width = 14
+        ws.column_dimensions["D"].width = 52
+        for col, name in zip("ABCD", ("Src_WireLabel", "Qty", "Size", "Key")):
+            c = ws[f"{col}1"]
+            c.value = name
+            c.font = hdr_font
+            c.fill = hdr_fill
+            c.border = border
+        wrote = False
+        note_written = False
+        for size, label, qty in records.values():
+            if _wlp_is_standard(size) != standard:
+                continue
+            wrote = True
+            disp = _wlp_label_display(label)
+            r = ws.max_row + 1
+            lc = ws.cell(r, 1, disp)
+            if len(label) > 14:
+                lc.fill = warn_fill
+            ws.cell(r, 2, qty)
+            ws.cell(r, 3, size)
+            if not note_written:
+                ws.cell(r, 4, _KEY_NOTE)
+                note_written = True
+        if not wrote:
+            ws.cell(2, 1, "No wires of this category found.")
+            ws.cell(2, 4, _KEY_NOTE)
+        ws.freeze_panes = "A2"
+
+    ws1 = wb.active
+    ws1.title = "Standard Wires"
+    _sheet(ws1, True)
+    _sheet(wb.create_sheet("Other Wires"), False)
+
+    out = io.BytesIO()
+    wb.save(out)
+    wb.close()
+    return out.getvalue()
+
+
 def _split_block_name(name):
     """Split a symbol display name into (base block name, visibility state).
 

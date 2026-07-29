@@ -357,6 +357,13 @@ def generate():
     out_paths, all_warnings, errors, validations = [], [], [], []
     if _fill_warning:
         all_warnings.append(_fill_warning)   # NEC over-fill notice (non-blocking)
+    if n_sheets > 1:
+        # Continuation notice: this conduit didn't fit on one sheet, so it's split across
+        # continuation sheets. Surface it in the generation log so the engineer knows.
+        all_warnings.append(
+            f"Conduit '{cond_tag}' has a continuation: it spans {n_sheets} sheets "
+            f"({', '.join(os.path.basename(pp) for pp in sheet_paths)})."
+        )
     for k, (a, b) in enumerate(chunks):
         loops_k = loop_list[a:b]
 
@@ -612,6 +619,51 @@ def fill_report():
         root.wm_attributes("-topmost", True)
         path = filedialog.asksaveasfilename(
             title="Save Conduit Fill Report",
+            initialfile=download_name,
+            initialdir=default_dir or None,
+            defaultextension=".xlsx",
+            filetypes=[("Excel files", "*.xlsx"), ("All files", "*.*")],
+        )
+        root.destroy()
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+    if not path:
+        return jsonify({"ok": False, "cancelled": True})
+    try:
+        with open(path, "wb") as fh:
+            fh.write(xl_bytes)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"Could not write the file: {e}"}), 500
+    return jsonify({"ok": True, "path": path})
+
+
+# ── Wire-label print export (Excel, parity with IDPWireLabelPrintExcel.lsp) ──────
+
+@idp_gen_bp.route("/wire-label-print", methods=["POST"])
+def wire_label_print():
+    """Build the wire-label PRINT workbook (grouped by size+label with Qty, Standard/Other
+    worksheets, >14-char highlight, %%C/%C -> Ø) and save it via a native Save-As dialog
+    (a browser download doesn't work inside the LISA webview).
+
+    Body: { "fill_index": [...], "filename": str, "default_dir": str }
+    Returns { ok: true, path } | { ok: false, cancelled: true } | { ok: false, error }.
+    """
+    body = request.get_json(silent=True) or {}
+    fill_index = body.get("fill_index", [])
+    stem = os.path.splitext(body.get("filename", "IDP_Workbook.xlsx"))[0]
+    download_name = f"{stem}_WireLabelPrint.xlsx"
+    try:
+        xl_bytes = svc_parser.build_wire_label_print(fill_index)
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e)}), 500
+
+    default_dir = body.get("default_dir") or ""
+    try:
+        root = tk.Tk()
+        root.withdraw()
+        root.wm_attributes("-topmost", True)
+        path = filedialog.asksaveasfilename(
+            title="Save Wire Label Print Report",
             initialfile=download_name,
             initialdir=default_dir or None,
             defaultextension=".xlsx",
