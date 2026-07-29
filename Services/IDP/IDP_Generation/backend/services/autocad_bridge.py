@@ -1293,13 +1293,10 @@ def _clear_model_space(model, warnings: list):
         deleted = preserved = skipped = 0
         for e in entities:
             try:
-                obj_name   = ""
-                layer_name = ""
                 try:
-                    obj_name   = str(_com_retry(lambda: e.ObjectName))
-                    layer_name = str(_com_retry(lambda: e.Layer)).upper()
+                    obj_name = str(_com_retry(lambda: e.ObjectName))
                 except Exception:
-                    pass
+                    obj_name = ""
 
                 if obj_name == "AcDbBlockReference":
                     bname = ""
@@ -1321,6 +1318,14 @@ def _clear_model_space(model, warnings: list):
                     preserved += 1
                     continue
 
+                # Only NON-block, non-table geometry needs its layer inspected. Reading .Layer
+                # for every entity -- including the hundreds of symbol-library blocks that are
+                # preserved regardless -- was a large chunk of the per-sheet clear time (an
+                # extra COM round-trip per block). Blocks/tables return above, so defer it.
+                try:
+                    layer_name = str(_com_retry(lambda: e.Layer)).upper()
+                except Exception:
+                    layer_name = ""
                 if "BORDER" in layer_name or "TITLE" in layer_name or "TABLE" in layer_name:
                     preserved += 1
                     continue
