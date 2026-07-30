@@ -23,7 +23,7 @@ const INPUT_STYLE = {
   border: "1px solid var(--border-strong)",
   borderRadius: "4px",
   padding: "4px 8px",
-  fontSize: "0.82rem",
+  fontSize: "0.9rem",
   outline: "none",
   width: "100%",
 };
@@ -35,7 +35,7 @@ const TABLE_CELL = {
   maxWidth: "200px",
   overflow: "hidden",
   textOverflow: "ellipsis",
-  fontSize: "0.8rem",
+  fontSize: "0.88rem",
   color: "var(--text)",
 };
 
@@ -140,6 +140,7 @@ export default function IdpGeneration() {
   const [status, setStatus]             = useState(null);   // { type, message }
   const [dragging, setDragging]         = useState(false);
   const [genLog, setGenLog]             = useState("");
+  const [logOpen, setLogOpen]           = useState(true);   // generation-log pullout open/closed
   const [jsonPasteOpen, setJsonPasteOpen] = useState(false);
   const [jsonPasteText, setJsonPasteText] = useState("");
   const [jsonPasteErr,  setJsonPasteErr]  = useState(null);
@@ -832,7 +833,7 @@ export default function IdpGeneration() {
 
   const busy        = loading !== null;
   const generating  = genAll !== null;
-  const genBtnStyle = { width: "190px", textAlign: "left" };
+  const genBtnStyle = { width: "100%", textAlign: "center", padding: "15px 16px", fontSize: "0.95rem" };
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -841,17 +842,29 @@ export default function IdpGeneration() {
 
       {/* ── TOP SECTION (frozen) ────────────────────────────────────────────── */}
       <div style={{ flexShrink: 0, width: "100%", background: "var(--bg-main)", paddingBottom: "12px" }}>
-        <h1 className="page-title">IDP DWG Generator</h1>
-        <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
-          <AutoCADStatusPill autocad={autocad} />
+        <div>
+          <div style={{ display: "flex", alignItems: "center", gap: "14px", flexWrap: "wrap" }}>
+            <h1 className="page-title" style={{ margin: 0 }}>IDP DWG Generator</h1>
+            <AutoCADStatusPill autocad={autocad} />
+          </div>
+          <p style={{ margin: "4px 0 0", fontSize: "0.86rem", color: "var(--text-dim)" }}>
+            Load a workbook, set the output, then generate the interconnection drawings.
+          </p>
         </div>
 
-        <div style={{ display: "flex", gap: "20px", alignItems: "stretch", flexWrap: "wrap", marginTop: "12px" }}>
+        {/* ── Numbered workflow rail: (1) Workbook  (2) Output  (3) Generate ── */}
+        <div className="idp-rail" style={{ gridTemplateColumns: logOpen ? "1fr 1.2fr 1.3fr" : "1fr 1.2fr 42px", alignItems: "stretch" }}>
 
-          {/* ── Left column: drop zone + stacked buttons ── */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "10px", minWidth: "240px", maxWidth: "280px" }}>
+          {/* (1) Workbook */}
+          <section className="idp-step">
+            <div className="idp-step-head">
+              <span className="idp-step-no">1</span>
+              <span className="idp-step-title">Workbook<small>Drag in the IDP macro workbook</small></span>
+              <HelpDot text="Drag & drop (or click to browse) the IDP macro workbook — an .xlsx or .xlsm. LISA reads its ConduitIndex and FillIndex sheets to build the drawings." />
+            </div>
             <div
               className={`drop-zone${dragging ? " dragging" : ""}${wb ? " has-file" : ""}`}
+              style={{ flex: 1, minHeight: "130px" }}
               onDragOver={e => { e.preventDefault(); setDragging(true); }}
               onDragLeave={() => setDragging(false)}
               onDrop={handleDrop}
@@ -871,7 +884,18 @@ export default function IdpGeneration() {
               }
             </div>
 
-            {loading === "parse" && <p style={{ color: "var(--text-label)", fontSize: "0.82rem" }}>Reading workbook…</p>}
+            {(() => {
+              const conduits = wb ? wb.conduit_index.length : 0;
+              const over     = wb ? wb.conduit_index.filter(r => r.Fill_Over).length : 0;
+              return (
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "8px" }}>
+                  <div className="idp-stat"><b>{conduits}</b><span>conduits</span></div>
+                  <div className={`idp-stat${over > 0 ? " over" : ""}`}><b>{over}</b><span>over the NEC fill limit</span></div>
+                </div>
+              );
+            })()}
+
+            {loading === "parse" && <p style={{ color: "var(--text-label)", fontSize: "0.9rem" }}>Reading workbook…</p>}
             {status && (
               status.type === "error"
                 ? <textarea
@@ -879,16 +903,23 @@ export default function IdpGeneration() {
                     className={`status-msg ${status.type}`}
                     value={status.message}
                     style={{ resize: "vertical", minHeight: "48px", width: "100%",
-                             fontFamily: "inherit", fontSize: "0.82rem", cursor: "text" }}
+                             fontFamily: "inherit", fontSize: "0.9rem", cursor: "text" }}
                   />
                 : <p className={`status-msg ${status.type}`}>{status.message}</p>
             )}
-          </div>
+          </section>
 
-          {/* ── Right column: output folder + generation actions ── */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "8px", width: "300px" }}>
+          {/* Middle column: steps 2 and 3 stacked */}
+          <div style={{ display: "flex", flexDirection: "column", gap: "14px", minWidth: 0 }}>
+          {/* (2) Output settings */}
+          <section className="idp-step">
+            <div className="idp-step-head">
+              <span className="idp-step-no">2</span>
+              <span className="idp-step-title">Output settings<small>Where the drawings are saved</small></span>
+              <HelpDot text="Pick the output folder and enter the project number (it names the files, e.g. 73.1163-D.01). Turn on 'Make it a project' to also assemble the .wdp/.aepx with the general sheets + drawing index." />
+            </div>
             <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-              <span style={{ color: "var(--text-label)", fontSize: "0.78rem" }}>Output folder</span>
+              <span style={{ color: "var(--text-label)", fontSize: "0.86rem" }}>Output folder</span>
               <div style={{ display: "flex", gap: "6px" }}>
                 <input
                   type="text"
@@ -909,7 +940,7 @@ export default function IdpGeneration() {
             </div>
 
             <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
-              <span style={{ color: "var(--text-label)", fontSize: "0.78rem" }}>Project number</span>
+              <span style={{ color: "var(--text-label)", fontSize: "0.86rem" }}>Project number</span>
               <input
                 type="text"
                 value={projectNumber}
@@ -918,32 +949,41 @@ export default function IdpGeneration() {
                 style={{ ...INPUT_STYLE }}
               />
               {projectNumber.trim() && (
-                <span style={{ color: "var(--text-dim)", fontSize: "0.72rem" }}>
+                <span style={{ color: "var(--text-dim)", fontSize: "0.82rem" }}>
                   Files (per IC.EDC.S011): {projectNumber.trim()}-D.01, {projectNumber.trim()}-D.02, …
                 </span>
               )}
             </div>
 
-            <label style={{ display: "flex", alignItems: "flex-start", gap: "8px", cursor: "pointer" }}>
-              <input
-                type="checkbox"
-                checked={makeProject}
-                onChange={e => setMakeProject(e.target.checked)}
-                style={{ width: "16px", height: "16px", marginTop: "2px", cursor: "pointer", flexShrink: 0 }}
-              />
-              <span style={{ fontSize: "0.82rem", color: "var(--text-label)" }}>
+            <div
+              onClick={() => setMakeProject(v => !v)}
+              role="switch"
+              aria-checked={makeProject}
+              style={{ display: "flex", alignItems: "flex-start", gap: "10px", cursor: "pointer" }}
+            >
+              <span className={`idp-toggle${makeProject ? " on" : ""}`} style={{ marginTop: "1px" }} />
+              <span style={{ fontSize: "0.9rem", color: "var(--text)" }}>
                 Make it a project
-                <span style={{ display: "block", color: "var(--text-dim)", fontSize: "0.72rem" }}>
-                  Assembles an AutoCAD Electrical project (.wdp/.aepx) with the GENERAL sheets + your
+                <span style={{ display: "block", color: "var(--text-dim)", fontSize: "0.82rem" }}>
+                  Assembles the AutoCAD Electrical project (.wdp/.aepx) with the general sheets + your
                   conduits, in the output folder. Needs a project number.
                 </span>
                 {makeProject && !projectNumber.trim() && (
-                  <span style={{ display: "block", color: "var(--status-error)", fontSize: "0.72rem", marginTop: "2px" }}>
+                  <span style={{ display: "block", color: "var(--status-error)", fontSize: "0.82rem", marginTop: "2px" }}>
                     Enter a project number above.
                   </span>
                 )}
               </span>
-            </label>
+            </div>
+          </section>
+
+          {/* (3) Generate */}
+          <section className="idp-step" style={{ flex: 1 }}>
+            <div className="idp-step-head">
+              <span className="idp-step-no">3</span>
+              <span className="idp-step-title">Generate<small>Draw each conduit, then finalize once</small></span>
+              <HelpDot text="Generate All draws a DWG for every conduit in the list, in order. If 'Make it a project' is on, the drawing index + title blocks are finalized once at the very end. Needs AutoCAD open." />
+            </div>
 
             <button
               className="btn btn-primary"
@@ -971,8 +1011,7 @@ export default function IdpGeneration() {
             )}
 
             {/* ── Generate from a conduit-name list (.txt or .csv) ── */}
-            <div style={{ display: "flex", flexDirection: "column", gap: "4px", marginTop: "4px",
-                          borderTop: "1px solid var(--border)", paddingTop: "8px" }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: "4px" }}>
               <input ref={txtInputRef} type="file" accept=".txt,.csv" style={{ display: "none" }}
                      onChange={e => handleListFile(e.target.files[0])} />
               <button className="btn btn-primary" style={genBtnStyle}
@@ -981,16 +1020,16 @@ export default function IdpGeneration() {
                 Upload conduit list (.txt / .csv)
               </button>
               {listSummary && (
-                <span style={{ color: "var(--text-dim)", fontSize: "0.70rem" }}>{listSummary}</span>
+                <span style={{ color: "var(--text-dim)", fontSize: "0.8rem" }}>{listSummary}</span>
               )}
               {txtMatch && (
-                <span style={{ color: "var(--text-label)", fontSize: "0.72rem" }}>
+                <span style={{ color: "var(--text-label)", fontSize: "0.82rem" }}>
                   {txtFileName}: <b style={{ color: "var(--status-success-soft)" }}>{txtMatch.matched.length}</b> matched
                   {txtMatch.notFound.length ? <>, <b style={{ color: "var(--status-warning)" }}>{txtMatch.notFound.length}</b> not found</> : null}
                 </span>
               )}
               {txtMatch && txtMatch.notFound.length > 0 && (
-                <span style={{ color: "var(--status-warning)", fontSize: "0.70rem", whiteSpace: "normal" }}
+                <span style={{ color: "var(--status-warning)", fontSize: "0.8rem", whiteSpace: "normal" }}
                       title={txtMatch.notFound.join(", ")}>
                   Not in workbook: {txtMatch.notFound.slice(0, 6).join(", ")}
                   {txtMatch.notFound.length > 6 ? ` +${txtMatch.notFound.length - 6} more` : ""}
@@ -1009,40 +1048,42 @@ export default function IdpGeneration() {
                 </button>
               )}
             </div>
+          </section>
           </div>
 
-          {/* ── Generation log ── */}
-          <div style={{ display: "flex", flexDirection: "column", gap: "4px", flex: 1, minWidth: "240px" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ color: "var(--text-label)", fontSize: "0.78rem" }}>Generation Log</span>
-              {genLog && (
-                <button
-                  onClick={() => setGenLog("")}
-                  style={{ background: "none", border: "none", color: "var(--text-dim)", fontSize: "0.72rem", cursor: "pointer", padding: "0 2px" }}
-                >
-                  Clear
-                </button>
-              )}
-            </div>
-            <textarea
-              readOnly
-              value={genLog || "No generation activity yet."}
-              style={{
-                flex: 1,
-                background: "var(--bg-input)",
-                color: "var(--text)",
-                border: "1px solid var(--border-strong)",
-                borderRadius: "4px",
-                padding: "6px 8px",
-                fontSize: "0.75rem",
-                fontFamily: "monospace",
-                resize: "none",
-                outline: "none",
-                minHeight: "120px",
-              }}
-            />
-          </div>
-
+          {/* Generation log — collapsible box on the right of the workflow rail */}
+          <section className="idp-step" style={{ padding: logOpen ? "14px 15px" : "12px 4px", overflow: "hidden" }}>
+            {logOpen ? (
+              <>
+                <div className="idp-step-head" style={{ justifyContent: "space-between" }}>
+                  <span className="idp-step-title">Generation log</span>
+                  <span style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                    {genLog && (
+                      <button onClick={() => setGenLog("")}
+                        style={{ background: "none", border: "none", color: "var(--text-dim)", fontSize: "0.82rem", cursor: "pointer", padding: 0 }}>
+                        Clear
+                      </button>
+                    )}
+                    <button onClick={() => setLogOpen(false)} title="Collapse the log"
+                      style={{ background: "none", border: "none", color: "var(--text-dim)", fontSize: "0.95rem", cursor: "pointer", padding: 0, lineHeight: 1 }}
+                      aria-label="Collapse the log">›</button>
+                  </span>
+                </div>
+                <textarea readOnly value={genLog || "No generation activity yet."}
+                  style={{ flex: 1, width: "100%", boxSizing: "border-box", background: "var(--bg-input)", color: "var(--text)",
+                    border: "1px solid var(--border-strong)", borderRadius: "6px", padding: "6px 8px",
+                    fontSize: "0.82rem", fontFamily: "monospace", resize: "vertical", outline: "none", minHeight: "300px" }} />
+              </>
+            ) : (
+              <button onClick={() => setLogOpen(true)} title="Show the generation log" aria-label="Show the generation log"
+                style={{ background: "none", border: "none", color: "var(--text-label)", cursor: "pointer",
+                  display: "flex", flexDirection: "column", alignItems: "center", gap: "8px", height: "100%", width: "100%", padding: "2px 0", fontSize: "0.8rem", fontWeight: 600 }}>
+                <span style={{ fontSize: "0.95rem", lineHeight: 1 }}>‹</span>
+                <span style={{ writingMode: "vertical-rl", transform: "rotate(180deg)", textTransform: "uppercase", letterSpacing: "0.08em" }}>Log</span>
+                {genLog && <span title="New activity" style={{ width: "7px", height: "7px", borderRadius: "50%", background: "var(--accent)" }} />}
+              </button>
+            )}
+          </section>
         </div>
       </div>
 
@@ -1060,7 +1101,7 @@ export default function IdpGeneration() {
                 background: "transparent",
                 color: activeTab === key ? "var(--text)" : "var(--text-dim)",
                 cursor: "pointer",
-                fontSize: "0.82rem",
+                fontSize: "0.9rem",
               }}
             >
               {label} ({key === "conduit" ? wb.conduit_index.length : wb.fill_index.length})
@@ -1072,52 +1113,42 @@ export default function IdpGeneration() {
       {/* ── JSON toolbar ─────────────────────────────────────────────────────── */}
       {wb && (
         <div style={{ flexShrink: 0, background: "var(--bg-app)", borderBottom: "1px solid var(--border)", padding: "4px 20px", display: "flex", flexDirection: "column", gap: "4px" }}>
-          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+          <div style={{ display: "flex", gap: "10px", alignItems: "center", flexWrap: "wrap" }}>
+            <span className="idp-tool-group">
+            <span className="idp-tool-glabel">Data</span>
             <button
               onClick={() => { setJsonPasteOpen(v => !v); setJsonPasteErr(null); }}
-              style={{ background: "none", border: "1px solid var(--border-strong)", color: jsonPasteOpen ? "var(--accent-cyan)" : "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: "pointer", fontSize: "0.75rem" }}
-              title="Paste JSON to replace this index"
+              className="idp-toolbtn"
+              style={{ color: jsonPasteOpen ? "var(--accent-cyan)" : "var(--text-label)" }}
+              title="Paste a JSON array to replace the current index (the active tab), e.g. one exported from another workbook or edited by hand."
             >
-              📋 Paste JSON
+              <Icon name="paste" /> Paste JSON
             </button>
-            <button
-              onClick={handleCopyJson}
-              style={{ background: "none", border: "1px solid var(--border-strong)", color: "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: "pointer", fontSize: "0.75rem" }}
-              title="Copy current index as JSON"
-            >
-              📤 Copy JSON
+            <button onClick={handleCopyJson} className="idp-toolbtn"
+              title="Copy the current index (the active tab) to the clipboard as a JSON array.">
+              <Icon name="copy" /> Copy JSON
             </button>
-            <button
-              onClick={handleExportConduitCsv}
-              style={{ background: "none", border: "1px solid var(--border-strong)", color: "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: "pointer", fontSize: "0.75rem" }}
-              title={'Download a CSV of every conduit name with an Enabled/Disabled (1/0) column.\nEdit it in Excel (set 0 to skip a conduit), then re-upload via "Upload conduit list" to generate the enabled ones.'}
-            >
-              ⬇ Conduit list CSV
+            </span>
+            <span className="idp-tool-sep" />
+            <span className="idp-tool-group">
+            <span className="idp-tool-glabel">Export</span>
+            <button onClick={handleExportConduitCsv} className="idp-toolbtn"
+              title={'A CSV of every conduit name with an Enabled/Disabled (1/0) column. Edit it in Excel (set 0 to skip a conduit), then re-upload it via "Upload conduit list" to generate only the enabled ones.'}>
+              <Icon name="download" /> Conduit CSV
             </button>
-            <button
-              onClick={handleFillReport}
-              disabled={loading === "fillreport"}
-              style={{ background: "none", border: "1px solid var(--border-strong)", color: "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: loading === "fillreport" ? "default" : "pointer", fontSize: "0.75rem" }}
-              title={"Download an Excel report of every conduit's NEC Chapter 9 fill %:\nraw fill % and % of the allowable limit, the conductor/cable breakdown, and which conduits are over-filled."}
-            >
-              {loading === "fillreport" ? "Building…" : "⬇ Fill % report (Excel)"}
+            <button onClick={handleFillReport} disabled={loading === "fillreport"} className="idp-toolbtn"
+              title="Excel report of every conduit's NEC Chapter 9 fill: the raw fill %, the % of the allowable limit, the conductor/cable breakdown, and which conduits are over-filled.">
+              {loading === "fillreport" ? "Building…" : <><Icon name="download" /> Fill % report</>}
             </button>
-            <button
-              onClick={handleWireLabelPrint}
-              disabled={loading === "wirelabelprint"}
-              style={{ background: "none", border: "1px solid var(--border-strong)", color: "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: loading === "wirelabelprint" ? "default" : "pointer", fontSize: "0.75rem" }}
-              title={"Wire-label print report (matches the AutoCAD IDPWireLabelPrintExcel macro):\nunique wire labels grouped with a Qty, split into Standard (10/12/14/16/18/CAT6) and Other worksheets;\nlabels longer than 14 characters are highlighted yellow; %%C/%C shown as Ø."}
-            >
-              {loading === "wirelabelprint" ? "Building…" : "⬇ Wire label print (Excel)"}
+            <button onClick={handleWireLabelPrint} disabled={loading === "wirelabelprint"} className="idp-toolbtn"
+              title="Wire-label print report matching the AutoCAD IDPWireLabelPrintExcel macro: unique labels grouped with a Qty, split into Standard (10/12/14/16/18/CAT6) and Other worksheets; labels over 14 characters highlighted yellow; %%C/%C shown as Ø.">
+              {loading === "wirelabelprint" ? "Building…" : <><Icon name="download" /> Wire labels</>}
             </button>
-            <button
-              onClick={handleReindexFromWdp}
-              disabled={loading === "reindex"}
-              style={{ background: "none", border: "1px solid var(--border-strong)", color: "var(--text-label)", borderRadius: "4px", padding: "3px 8px", cursor: loading === "reindex" ? "default" : "pointer", fontSize: "0.75rem" }}
-              title={"Rebuild the DRAWING INDEX sheet from a project .wdp you pick.\nReads every drawing in the project (including ones added manually in ACADE) and rewrites the index table.\nReads the .wdp as-is; it does not modify the project file."}
-            >
-              {loading === "reindex" ? "Working…" : "🔄 Regenerate index (from .wdp)"}
+            <button onClick={handleReindexFromWdp} disabled={loading === "reindex"} className="idp-toolbtn"
+              title="Rebuild the DRAWING INDEX sheet from a project .wdp you pick. Reads every drawing in the project (including ones added manually in ACADE) and rewrites the index table. Reads the .wdp as-is — it does not modify the project file.">
+              {loading === "reindex" ? "Working…" : <><Icon name="refresh" /> Regenerate index</>}
             </button>
+            </span>
           </div>
           {jsonPasteOpen && (
             <div style={{ display: "flex", flexDirection: "column", gap: "4px", paddingBottom: "4px" }}>
@@ -1126,13 +1157,13 @@ export default function IdpGeneration() {
                 placeholder={`Paste ${activeTab === "conduit" ? "conduit_index" : "fill_index"} JSON array here…`}
                 value={jsonPasteText}
                 onChange={e => setJsonPasteText(e.target.value)}
-                style={{ width: "100%", background: "var(--bg-input)", color: "var(--text)", border: "1px solid var(--border-strong)", borderRadius: "4px", padding: "6px 8px", fontSize: "0.78rem", resize: "vertical", outline: "none", fontFamily: "monospace", boxSizing: "border-box" }}
+                style={{ width: "100%", background: "var(--bg-input)", color: "var(--text)", border: "1px solid var(--border-strong)", borderRadius: "4px", padding: "6px 8px", fontSize: "0.86rem", resize: "vertical", outline: "none", fontFamily: "monospace", boxSizing: "border-box" }}
               />
-              {jsonPasteErr && <p style={{ color: "var(--status-error-soft)", fontSize: "0.75rem", margin: "0" }}>{jsonPasteErr}</p>}
+              {jsonPasteErr && <p style={{ color: "var(--status-error-soft)", fontSize: "0.84rem", margin: "0" }}>{jsonPasteErr}</p>}
               <div style={{ display: "flex", gap: "6px" }}>
                 <button
                   className="btn btn-primary"
-                  style={{ padding: "3px 12px", fontSize: "0.78rem" }}
+                  style={{ padding: "3px 12px", fontSize: "0.86rem" }}
                   onClick={handleApplyJson}
                   disabled={!jsonPasteText.trim()}
                 >
@@ -1140,7 +1171,7 @@ export default function IdpGeneration() {
                 </button>
                 <button
                   className="btn btn-secondary"
-                  style={{ padding: "3px 10px", fontSize: "0.78rem" }}
+                  style={{ padding: "3px 10px", fontSize: "0.86rem" }}
                   onClick={() => { setJsonPasteOpen(false); setJsonPasteText(""); setJsonPasteErr(null); }}
                 >
                   Cancel
@@ -1186,6 +1217,7 @@ export default function IdpGeneration() {
           Upload an IDP workbook to get started.
         </div>
       )}
+
     </div>
   );
 }
@@ -1194,17 +1226,54 @@ export default function IdpGeneration() {
 // ── AutoCAD status pill ────────────────────────────────────────────────────
 
 function AutoCADStatusPill({ autocad }) {
+  const base = {
+    display: "inline-flex", alignItems: "center", gap: "7px", fontSize: "0.84rem", fontWeight: 600,
+    padding: "5px 12px", borderRadius: "20px", border: "1px solid", whiteSpace: "nowrap",
+  };
   if (autocad === null) {
-    return <span style={{ fontSize: "0.75rem", color: "var(--text-dim)" }}>Checking AutoCAD…</span>;
+    return (
+      <span style={{ ...base, color: "var(--text-dim)", borderColor: "var(--border-strong)", background: "var(--bg-input)" }}>
+        <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: "var(--text-dim)" }} />
+        Checking AutoCAD…
+      </span>
+    );
   }
-  const color = autocad.running ? "var(--status-success-soft)" : "var(--status-error-soft)";
-  const label = autocad.running
-    ? `● AutoCAD ready${autocad.version ? ` (${autocad.version})` : ""}`
-    : "● AutoCAD not detected";
+  const ok = autocad.running;
+  const c = ok ? "var(--status-success-soft)" : "var(--status-red-bright)";
+  const soft = ok ? "color-mix(in srgb, var(--status-success-soft) 16%, transparent)"
+                  : "color-mix(in srgb, var(--status-red-bright) 16%, transparent)";
   return (
-    <span style={{ fontSize: "0.75rem", color, fontWeight: 500 }}>
-      {label}
+    <span style={{ ...base, color: c, borderColor: c, background: soft }}>
+      <span style={{ width: "8px", height: "8px", borderRadius: "50%", background: c,
+        boxShadow: ok ? "0 0 0 3px color-mix(in srgb, var(--status-success-soft) 22%, transparent)" : "none" }} />
+      {ok ? `AutoCAD connected${autocad.version ? ` · ${autocad.version}` : ""}` : "AutoCAD not detected"}
     </span>
+  );
+}
+
+// Small monochrome line icons (inherit text color) — replaces the emoji on toolbar buttons.
+function Icon({ name, size = 13 }) {
+  const d = {
+    download: "M12 3v11M7.5 10.5 12 15l4.5-4.5M5 20h14",
+    copy:     "M9 9h11v11H9zM5 15V4h11",
+    paste:    "M9 4h6v3H9zM7 5.5H6a2 2 0 0 0-2 2V19a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5a2 2 0 0 0-2-2h-1",
+    refresh:  "M20 11a8 8 0 1 0-.6 4M20 4v6h-6",
+  }[name] || "";
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor"
+      strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ flexShrink: 0 }}>
+      {d.split("M").filter(Boolean).map((seg, i) => <path key={i} d={"M" + seg} />)}
+    </svg>
+  );
+}
+
+// A small "?" info indicator — hover shows the explanatory tooltip.
+function HelpDot({ text }) {
+  return (
+    <span title={text} aria-label={text} role="img"
+      style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "14px", height: "14px",
+        borderRadius: "50%", border: "1px solid var(--border-strong)", color: "var(--text-dim)", fontSize: "9px",
+        fontWeight: 700, cursor: "help", marginLeft: "5px", flexShrink: 0, lineHeight: 1 }}>?</span>
   );
 }
 
@@ -1260,11 +1329,12 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
     .filter(c => !_hiddenCols.has(c));
 
   return (
-    <table style={{ borderCollapse: "collapse", minWidth: "100%", fontSize: "0.8rem" }}>
+    <table style={{ borderCollapse: "collapse", minWidth: "100%", fontSize: "0.88rem" }}>
       <thead>
         <tr>
           <th style={{ ...TH_STYLE, width: "28px", minWidth: "28px" }}></th>
           <th style={{ ...TH_STYLE, minWidth: "120px" }}>Generate</th>
+          <th style={{ ...TH_STYLE, minWidth: "180px" }}>Source → Destination</th>
           {displayCols.map(col => (
             <th key={col} style={TH_STYLE}>{col}</th>
           ))}
@@ -1280,6 +1350,9 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
           const fillPct = row["Fill_Pct"];         // raw NEC fill % (of total conduit area), or null
           const fillOfLimit = row["Fill_Of_Limit"];// same fill as % of the NEC-allowable area (>100 = over)
           const assumedType = row["Fill_Assumed_Type"]; // conduit type assumed (blank/XXX type), or null
+          // Read-only "source → destination" summary (the interconnection this row draws).
+          const srcName = row["Src_Name01"] || row["Src_Jbox"] || row["Src_Raw"] || "";
+          const dstName = row["Dst_Name01"] || row["Dst_Jbox"] || row["Dst_Raw"] || "";
 
           return (
             <tr key={i}
@@ -1309,7 +1382,7 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                       <span className="spinner" title="Generating…" />
                       <button
                         className="btn"
-                        style={{ padding: "2px 10px", fontSize: "0.75rem", background: "var(--status-error)", borderColor: "var(--status-error)", color: "#fff" }}
+                        style={{ padding: "2px 10px", fontSize: "0.84rem", background: "var(--status-error)", borderColor: "var(--status-error)", color: "#fff" }}
                         onClick={() => onStop(ident)}
                         title="Stop this generation (the DWG already drawing in AutoCAD will finish)"
                       >
@@ -1319,7 +1392,7 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                   ) : (
                     <button
                       className="btn btn-primary"
-                      style={{ padding: "2px 10px", fontSize: "0.75rem" }}
+                      style={{ padding: "2px 10px", fontSize: "0.84rem" }}
                       disabled={generating || !autocadOk}
                       onClick={() => onGenerate(ident)}
                       title={!autocadOk ? "AutoCAD not detected — open AutoCAD before generating" : ""}
@@ -1329,29 +1402,31 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                   )}
                   {result && (
                     result.ok
-                      ? <span style={{ color: "var(--status-success-soft)", fontSize: "0.72rem" }}>
+                      ? <span style={{ color: "var(--status-success-soft)", fontSize: "0.82rem" }}>
                           ✓ {result.path?.split(/[\\/]/).pop()}
                           {result.warnings?.length > 0 && <span style={{ color: "var(--status-warning)", marginLeft: "4px" }}>⚠</span>}
                         </span>
-                      : <span style={{ color: "var(--status-error-soft)", fontSize: "0.72rem" }}>✗ see log</span>
+                      : <span style={{ color: "var(--status-error-soft)", fontSize: "0.82rem" }}>✗ see log</span>
                   )}
                   {fillPct != null && (
-                    <span title={(overfillMsg ||
+                    <span
+                      className={`idp-fillpill ${overfill ? "over" : (fillOfLimit != null && fillOfLimit >= 90 ? "warn" : "ok")}`}
+                      title={(overfillMsg ||
                         `NEC conduit fill: ${fillPct}% of the conduit's internal area` +
                         (fillOfLimit != null ? ` — ${fillOfLimit}% of the NEC-allowable fill` : "")) +
-                        (assumedType ? `  (conduit type not specified — assumed ${assumedType} for the area)` : "")}
-                      style={{
-                        fontSize: "0.72rem",
-                        fontWeight: overfill ? 700 : 500,
-                        color: overfill ? "var(--status-red-bright, #ff6666)" : "var(--text-dim)",
-                      }}>
+                        (assumedType ? `  (conduit type not specified — assumed ${assumedType} for the area)` : "")}>
                       {(overfill ? "⚠ " : "") + `Fill ${fillPct}%` +
-                        (fillOfLimit != null ? ` (${fillOfLimit}% of limit)` : "") +
-                        (overfill ? " — over" : "") +
-                        (assumedType ? ` · ${assumedType} assumed` : "")}
+                        (fillOfLimit != null ? ` · ${fillOfLimit}% of limit` : "") +
+                        (assumedType ? ` · ${assumedType}?` : "")}
                     </span>
                   )}
                 </div>
+              </td>
+              <td style={{ ...TABLE_CELL, minWidth: "180px", color: (srcName || dstName) ? "var(--text)" : "var(--text-faint)" }}
+                  title={(srcName || dstName) ? `${srcName} → ${dstName}` : ""}>
+                {(srcName || dstName)
+                  ? <span>{srcName}<span style={{ color: "var(--text-faint)", margin: "0 5px" }}>→</span>{dstName}</span>
+                  : "—"}
               </td>
               {displayCols.map(col => {
                 const isEditing = editingCell?.index === "conduit" && editingCell?.row === i && editingCell?.col === col;
@@ -1367,7 +1442,7 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                           if (e.key === "Enter")  onCellCommit(i, col, e.target.value);
                           if (e.key === "Escape") onCellCommit(i, col, val ?? "");
                         }}
-                        style={{ width: "100%", minWidth: "80px", background: "var(--bg-input)", color: "var(--text)", border: "1px solid var(--accent)", outline: "none", padding: "2px 6px", fontSize: "0.78rem" }}
+                        style={{ width: "100%", minWidth: "80px", background: "var(--bg-input)", color: "var(--text)", border: "1px solid var(--accent)", outline: "none", padding: "2px 6px", fontSize: "0.86rem" }}
                       />
                     </td>
                   );
@@ -1399,7 +1474,7 @@ function FillTable({ rows, editingCell, onCellClick, onCellCommit }) {
   const displayCols = templateOrdered(FILL_TEMPLATE_COLS, Object.keys(rows[0]));
 
   return (
-    <table style={{ borderCollapse: "collapse", minWidth: "100%", fontSize: "0.8rem" }}>
+    <table style={{ borderCollapse: "collapse", minWidth: "100%", fontSize: "0.88rem" }}>
       <thead>
         <tr>
           {displayCols.map(col => (
@@ -1424,7 +1499,7 @@ function FillTable({ rows, editingCell, onCellClick, onCellCommit }) {
                         if (e.key === "Enter")  onCellCommit(i, col, e.target.value);
                         if (e.key === "Escape") onCellCommit(i, col, val ?? "");
                       }}
-                      style={{ width: "100%", minWidth: "80px", background: "var(--bg-input)", color: "var(--text)", border: "1px solid var(--accent)", outline: "none", padding: "2px 6px", fontSize: "0.78rem" }}
+                      style={{ width: "100%", minWidth: "80px", background: "var(--bg-input)", color: "var(--text)", border: "1px solid var(--accent)", outline: "none", padding: "2px 6px", fontSize: "0.86rem" }}
                     />
                   </td>
                 );

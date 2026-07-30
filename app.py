@@ -68,7 +68,13 @@ def serve_spa(path):
     full = os.path.join(app.static_folder, path)
     if path and os.path.exists(full):
         return send_from_directory(app.static_folder, path)
-    return send_from_directory(app.static_folder, "index.html")
+    # Never let the webview cache the SPA shell -- a stale index.html would keep pointing at
+    # an old JS bundle and hide freshly-built UI. Hashed assets above stay cacheable.
+    resp = send_from_directory(app.static_folder, "index.html")
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
 
 # ── Launch ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
