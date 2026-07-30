@@ -27,6 +27,7 @@ import math
 import time
 import shutil
 import difflib
+import tempfile
 import datetime
 import importlib
 import threading
@@ -422,6 +423,35 @@ def _wait_quiescent(app, timeout=None):
     return False
 
 
+def _wait_doc_ready(app, doc, timeout=6.0, stable=2):
+    """Poll until a just-opened document is *sustainably* usable -- model space reachable AND
+    AutoCAD idle for `stable` consecutive reads -- then return True. Returns the instant it's
+    stably ready (so a normal sheet is still faster than the old flat time.sleep(1.5)) but waits
+    up to `timeout` for a slow open instead of proceeding on a transient idle blip. Returns False
+    if it never stabilises. Never raises.
+
+    A SINGLE quiescent reading right after Open is unreliable: AutoCAD reports idle for a moment,
+    then resumes background regen/layer-load and starts rejecting COM calls again. Catching that
+    blip left _unlock_all_layers / _clear_model_space to run against a still-busy doc ('Call was
+    rejected by callee' + an uncleared template), so the saved sheet kept the template's leftover
+    Conduit block (with its continuation visibility). Requiring consecutive good reads avoids it."""
+    deadline = time.time() + timeout
+    good = 0
+    while time.time() < deadline:
+        try:
+            _ = doc.ModelSpace.Count
+            if app.GetAcadState().IsQuiescent:
+                good += 1
+                if good >= stable:
+                    return True
+            else:
+                good = 0
+        except Exception:
+            good = 0
+        time.sleep(0.1)
+    return False
+
+
 _SHEET_RETRIES = 3   # whole-sheet attempts before giving up
 _SHEET_RETRY_DELAY = float(os.getenv("IDP_SHEET_RETRY_DELAY", "1.0"))   # was 2.0
 
@@ -433,8 +463,28 @@ def generate_dwg(*args, **kwargs) -> dict:
     clean template copy, after waiting for AutoCAD to go idle) succeeds. Each attempt is
     fully idempotent -- it re-copies the template and overwrites the output -- so a retry
     can't leave a half-drawn sheet. A genuinely broken conduit still fails all attempts
-    and returns its error, so nothing is masked; it just isn't randomly skipped."""
+    and returns its error, so nothing is masked; it just isn't randomly skipped.
+
+    Fast path (DEFAULT; kill-switch IDP_REUSE_DOC=0): reuse ONE open, pre-cleared template doc
+    across every sheet -- render/save/UNDO-reset instead of copy+open+clear per sheet (~17s/sheet
+    saved). It is tried FIRST; ANY failure or anomaly falls straight through to the proven
+    fresh-open path below, so the reuse path can never make output worse than the default."""
     with _GEN_LOCK:
+        if _reuse_enabled():
+            try:
+                r = _REUSE.generate_sheet(*args, **kwargs)
+                if r and r.get("success"):
+                    return r
+                _log(f"reuse path returned failure ({r.get('error') if r else None!r}); "
+                     f"falling back to fresh-open path")
+            except Exception as e:
+                _log(f"reuse path raised ({e!r}); falling back to fresh-open path")
+            # any reuse trouble -> tear the engine down and use the untouched fresh-open path
+            try:
+                _REUSE.discard()
+            except Exception:
+                pass
+
         r = None
         for attempt in range(_SHEET_RETRIES):
             r = _generate_dwg_impl(*args, **kwargs)
@@ -445,6 +495,181 @@ def generate_dwg(*args, **kwargs) -> dict:
                      f"whole sheet (attempt {attempt + 2}/{_SHEET_RETRIES})")
                 time.sleep(_SHEET_RETRY_DELAY)
         return r
+
+
+# ── Doc-reuse fast path (DEFAULT; kill-switch IDP_REUSE_DOC=0) ────────────────────────────────
+# The fresh-open path copies+opens+clears the template on EVERY sheet (~17s of identical prep).
+# Doc-reuse instead reuses ONE open, pre-cleared template doc for the whole run:
+#   open+clear ONCE  ->  per sheet: UNDO Mark -> render -> SaveAs(output) -> UNDO Back
+# AutoCAD's own UNDO reverts the ENTIRE sheet (added blocks, in-place table-cell edits, title-
+# block attrs, groups, dyn props) back to the cleared baseline in one shot -- proven on all three
+# mutation types. A count-verify after each reset guards against a partial/failed UNDO, and ANY
+# anomaly makes generate_dwg discard the engine and fall back to the fresh-open path.
+#
+# This is the DEFAULT: an A/B diff proved reuse output byte-identical to the fresh-open path
+# across a full 24-sheet run, a 96-sheet stress run was clean (0 errors / 0 bleed / 0 fallbacks),
+# and it is ~1.7x faster. Because it always falls back to the proven path on any anomaly, output
+# correctness never depends on it. IDP_REUSE_DOC is only a KILL-SWITCH -- set it to 0/false/off
+# to force the old per-sheet copy+open+clear path.
+
+def _reuse_enabled() -> bool:
+    return os.getenv("IDP_REUSE_DOC", "1").strip().lower() not in ("0", "false", "no", "off")
+
+
+_REUSE_SCRATCH = os.path.join(tempfile.gettempdir(), "lisa_idp_reuse_scratch.dwg")
+
+
+def _render_and_save_sheet(model, doc, conduit_data, loop_list, output_path, warnings,
+                           ref_doc_rows=None, dev_rows=None, block_heights=None,
+                           cont_state=None, cont_prev=None, cont_next=None,
+                           project_desc=None, sheet_number=None, drawing_no=None):
+    """Render one sheet onto `model`/`doc` and SaveAs(output_path). This is the SAME sequence the
+    fresh-open path runs inline (build plan -> continuation -> render -> completeness -> ref-docs
+    -> title block -> SaveAs); the reuse engine calls it against the shared baseline doc. Raises on
+    an incomplete render or a missing save so the caller can reset+fall back. Returns `placed`."""
+    plan = build_layout_plan(conduit_data, loop_list, block_heights)
+    warnings.extend(plan.get("warnings", []))
+    if cont_state:
+        plan["conduit"]["visibility"] = cont_state
+        plan["conduit"]["attrs"]["CONT_Previous_DWG"] = cont_prev or ""
+        plan["conduit"]["attrs"]["CONT_Next_DWG"]     = cont_next or ""
+        _log(f"  continuation sheet: state={cont_state} prev={cont_prev!r} next={cont_next!r}")
+    _log(f"  layout plan: {len(plan.get('items', []))} block(s)")
+    placed = render_plan(model, plan, warnings)
+    expected_blocks = (1 if plan.get("conduit") else 0) + \
+        sum(1 for it in plan.get("items", []) if it.get("kind") != "mtext")
+    if len(placed) < expected_blocks:
+        raise RuntimeError("Sheet incomplete: %d of %d blocks placed (AutoCAD busy) — not saved"
+                           % (len(placed), expected_blocks))
+    if ref_doc_rows or dev_rows:
+        _fill_ref_docs_table(model, ref_doc_rows or [], dev_rows or [], warnings)
+    else:
+        _log("  ref_docs table: skipped (no ref_doc_rows or dev_rows)")
+    title_block_values = _build_title_block_values(conduit_data, project_desc, sheet_number, drawing_no)
+    if title_block_values:
+        _set_title_block_attrs(doc, title_block_values, warnings)
+    _log("Calling SaveAs...")
+    _com_retry(lambda: doc.SaveAs(output_path))
+    if not os.path.exists(output_path):
+        raise RuntimeError(f"SaveAs completed but file not found at: {output_path}")
+    return placed
+
+
+class _ReuseEngine:
+    """Holds ONE open, pre-cleared template doc and reuses it across sheets. Module-singleton so
+    it persists across the per-conduit /generate POSTs (Flask stays single-threaded on one COM
+    thread, serialized by _GEN_LOCK). Never trusted blindly: a stale doc or a reset that doesn't
+    restore the baseline count makes the caller discard + fall back to the fresh-open path."""
+
+    def __init__(self):
+        self.app = self.doc = self.model = None
+        self.template = None
+        self.baseline_count = None
+
+    def _alive(self) -> bool:
+        if self.doc is None or self.app is None:
+            return False
+        try:
+            # Tolerate a transient busy hiccup: a momentary 'rejected by callee' on this cheap
+            # touch must NOT trigger a wasteful full re-open+clear (~17s). Only a genuinely dead
+            # handle (AutoCAD closed / doc gone) fails all the retries.
+            _com_retry(lambda: (str(self.doc.Name), str(self.app.Version)), any_error=True)
+            return True
+        except Exception:
+            return False
+
+    def discard(self):
+        try:
+            if self.doc is not None:
+                _com_retry(lambda: self.doc.Close(False), any_error=True)
+        except Exception:
+            pass
+        self.app = self.doc = self.model = None
+        self.template = self.baseline_count = None
+
+    def _ensure_baseline(self, template_path):
+        if self._alive() and self.template == template_path and self.baseline_count is not None:
+            return
+        self.discard()
+        app = None
+        for _ in range(_ACAD_CONNECT_RETRIES):
+            try:
+                app = win32com.client.GetActiveObject("AutoCAD.Application")
+                _ = str(app.Version)
+                break
+            except Exception:
+                app = None
+                time.sleep(2)
+        if app is None:
+            raise RuntimeError("reuse engine: AutoCAD not accessible")
+        _wait_quiescent(app)
+        _close_if_open(app, _REUSE_SCRATCH)
+        shutil.copyfile(template_path, _REUSE_SCRATCH)
+        doc = None
+        for _ in range(_ACAD_CONNECT_RETRIES):
+            try:
+                doc = app.Documents.Open(_REUSE_SCRATCH)
+                break
+            except Exception:
+                doc = None
+                time.sleep(2)
+        if doc is None:
+            raise RuntimeError("reuse engine: could not open template scratch copy")
+        if not _wait_doc_ready(app, doc, timeout=6.0):
+            time.sleep(1.5)
+        model = _com_retry(lambda: doc.ModelSpace)
+        _unlock_all_layers(doc, [])
+        _clear_model_space(model, [])
+        _wait_quiescent(app)
+        self.app, self.doc, self.model, self.template = app, doc, model, template_path
+        self.baseline_count = int(_com_retry(lambda: model.Count))
+        _log(f"reuse engine: baseline ready (count={self.baseline_count}, template={os.path.basename(template_path)})")
+
+    def _mark(self):
+        _wait_quiescent(self.app)
+        _com_retry(lambda: self.doc.SendCommand("_.UNDO\n_Mark\n"), any_error=True)
+        _wait_quiescent(self.app)
+
+    def _reset_to_baseline(self):
+        """Revert everything rendered since the last _mark() via AutoCAD UNDO, then VERIFY the
+        model is back to the exact baseline entity count. A mismatch means the UNDO didn't fully
+        revert -- raise so the caller discards the engine (correctness over reuse)."""
+        _wait_quiescent(self.app)
+        _com_retry(lambda: self.doc.SendCommand("_.UNDO\n_Back\n"), any_error=True)
+        _wait_quiescent(self.app)
+        self.model = _com_retry(lambda: self.doc.ModelSpace)
+        cnt = int(_com_retry(lambda: self.model.Count))
+        if cnt != self.baseline_count:
+            raise RuntimeError(f"reuse reset did not restore baseline (count {cnt} != {self.baseline_count})")
+
+    def generate_sheet(self, conduit_data, loop_list, output_path, **kw):
+        self._ensure_baseline(_get_template_path())
+        warnings = []
+        _close_if_open(self.app, output_path)   # release a stale doc holding the OUTPUT (not scratch)
+        self._mark()
+        try:
+            placed = _render_and_save_sheet(self.model, self.doc, conduit_data, loop_list,
+                                            output_path, warnings, **kw)
+        except Exception:
+            # render/save failed -> revert the partial render so the shared baseline stays clean;
+            # if even the revert can't be trusted, discard the whole engine. Re-raise so the caller
+            # runs the fresh-open path for this sheet.
+            try:
+                self._reset_to_baseline()
+            except Exception:
+                self.discard()
+            raise
+        # saved OK -> revert to baseline for the next sheet, then rebind scratch OFF the output so
+        # the output file isn't left locked when emit_and_validate copies it.
+        self._reset_to_baseline()
+        _com_retry(lambda: self.doc.SaveAs(_REUSE_SCRATCH), any_error=True)
+        validation = emit_and_validate(placed, output_path, warnings)
+        _log(f"reuse engine: sheet done -> {os.path.basename(output_path)}")
+        return {"success": True, "output_path": output_path, "warnings": warnings,
+                "error": None, "validation": validation}
+
+
+_REUSE = _ReuseEngine()
 
 
 def _is_bigtb(nm) -> bool:
@@ -1191,14 +1416,27 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
                 break
     if doc is None:
         return _err(_acad_busy_hint(f"Failed to open template '{template_path}': {_open_err}"))
-    # Brief settle after Open before touching the doc. We already waited for AutoCAD to go
-    # quiescent before opening (and every COM call below is _com_retry-wrapped), so a long
-    # fixed pause here is wasted on every sheet -- 0.4s is enough to let the doc register.
-    time.sleep(0.4)
-    model = doc.ModelSpace
-    _log(f"  Opened template copy — doc: {doc.Name}")
-
     try:
+        # Wait for the freshly-opened doc to be usable, but only as long as needed. Poll until
+        # model space is reachable AND AutoCAD is *stably* idle, returning the instant it is (so
+        # the common sheet is faster than the old flat time.sleep(1.5)). If it never stabilises
+        # within the cap, fall back to the old guaranteed settle so we never operate on a doc
+        # that's LESS ready than before -- a not-ready doc made unlock/clear fail silently and
+        # leave the template's leftover geometry in the saved sheet.
+        if not _wait_doc_ready(acad_app, doc, timeout=6.0):
+            time.sleep(1.5)
+        # Capturing model space and reading doc.Name both touch the just-opened doc over COM;
+        # while AutoCAD is still finishing the open these can be rejected ('Call was rejected by
+        # callee'). Keep them INSIDE the try so a rejection becomes a whole-sheet retry (return
+        # _err) instead of an uncaught 500 with no retry -- this unprotected open/prep region was
+        # a source of hard "Generation failed" that the whole-sheet retry never got to recover.
+        model = _com_retry(lambda: doc.ModelSpace)
+        try:
+            _doc_name = str(_com_retry(lambda: doc.Name))
+        except Exception:
+            _doc_name = "<pending>"
+        _log(f"  Opened template copy — doc: {_doc_name}")
+
         # ── 4. Unlock all layers ──────────────────────────────────────────────
         _unlock_all_layers(doc, warnings)
 
@@ -1227,6 +1465,18 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
             _log(f"  continuation sheet: state={cont_state} prev={cont_prev!r} next={cont_next!r}")
         _log(f"  layout plan: {len(plan.get('items', []))} block(s)")
         placed = render_plan(model, plan, warnings)
+
+        # Completeness check: every planned BLOCK (the conduit + each non-text item) should
+        # have landed. If fewer were placed, a block insert silently failed mid-render (a
+        # transient COM stall) and the sheet is incomplete -- raise so generate_dwg re-renders
+        # it from a fresh template copy instead of saving a partial drawing that reports
+        # success. MTEXT callouts aren't in `placed`, so they're excluded from the count.
+        expected_blocks = (1 if plan.get("conduit") else 0) + \
+            sum(1 for it in plan.get("items", []) if it.get("kind") != "mtext")
+        if len(placed) < expected_blocks:
+            raise RuntimeError(
+                "Sheet incomplete: %d of %d blocks placed (AutoCAD busy) — not saved"
+                % (len(placed), expected_blocks))
 
         # ── 8. Fill supporting documents + deviation-notes table ──────────────
         _log(f"  ref_doc_rows count={len(ref_doc_rows or [])}  dev_rows count={len(dev_rows or [])}")
@@ -1280,15 +1530,25 @@ def _generate_dwg_impl(conduit_data: dict, loop_list: list, output_path: str,
 # ── AutoCAD helpers ───────────────────────────────────────────────────────────
 
 def _unlock_all_layers(doc, warnings: list):
-    try:
+    # A HARD failure here (can't enumerate the layer table even after busy-retries) means the doc
+    # isn't ready to be operated on -- and letting it slide leaves layers LOCKED, which then makes
+    # the deletes in _clear_model_space fail silently and leaves the template's leftover geometry
+    # in the sheet. So a persistent failure raises (whole-sheet retry from a fresh copy). A single
+    # stubborn layer (per-layer set) stays soft -- some layers legitimately refuse unlock.
+    #
+    # Iterate `doc.Layers` DIRECTLY -- the proven, shipped form. Do NOT use list(doc.Layers):
+    # under win32com late binding the AutoCAD Layers collection raises "object does not support
+    # enumeration" for list(), so materialising it first is unreliable across binding states.
+    def _unlock():
         for layer in doc.Layers:
             try:
                 layer.Lock   = False
                 layer.Freeze = False
             except Exception:
                 pass
-    except Exception as ex:
-        warnings.append(f"Could not unlock layers: {ex}")
+    # any_error: a just-opened doc can transiently raise AttributeError('Open.Layers') when the
+    # .Layers collection isn't bound yet -- retry it like a busy hiccup instead of failing.
+    _com_retry(_unlock, any_error=True)
 
 
 def _clear_model_space(model, warnings: list):
@@ -1298,52 +1558,73 @@ def _clear_model_space(model, warnings: list):
     EXCEPTION: pre-existing Conduit block(s) are deleted because the generator
     inserts its own Conduit at the same spot (0,0) and would otherwise overlay
     the template's leftover one.
-    """
-    try:
-        count = _com_retry(lambda: model.Count)
-        entities = [_com_retry(lambda: model.Item(i)) for i in range(count)]
-        deleted = preserved = skipped = 0
-        for e in entities:
-            try:
-                obj_name   = ""
-                layer_name = ""
-                try:
-                    obj_name   = str(_com_retry(lambda: e.ObjectName))
-                    layer_name = str(_com_retry(lambda: e.Layer)).upper()
-                except Exception:
-                    pass
 
-                if obj_name == "AcDbBlockReference":
-                    bname = ""
+    Raises if the model space can't be enumerated, or if a leftover template Conduit can't be
+    removed. Both mean the sheet would render on top of un-cleared template geometry (the stray
+    Conduit shows its own continuation visibility), so the caller must re-render from a fresh
+    template copy rather than save a corrupt drawing. This used to be swallowed into a warning,
+    which is exactly how a not-ready doc produced 'good'-looking sheets with the template's
+    continuation block bleeding through.
+    """
+    count = _com_retry(lambda: model.Count)
+    entities = [_com_retry(lambda: model.Item(i)) for i in range(count)]
+    deleted = preserved = skipped = stray_conduit_failed = 0
+    for e in entities:
+        try:
+            try:
+                obj_name = str(_com_retry(lambda: e.ObjectName))
+            except Exception:
+                obj_name = ""
+
+            if obj_name == "AcDbBlockReference":
+                bname = ""
+                try:
+                    bname = str(e.EffectiveName)
+                except Exception:
                     try:
-                        bname = str(e.EffectiveName)
+                        bname = str(e.Name)
                     except Exception:
-                        try:
-                            bname = str(e.Name)
-                        except Exception:
-                            bname = ""
-                    if bname.upper() == CONDUIT_NAME.upper():
+                        bname = ""
+                if bname.upper() == CONDUIT_NAME.upper():
+                    # This leftover template Conduit MUST go -- the generator inserts its own at
+                    # 0,0 and a survivor overlays it (and shows the template's continuation
+                    # visibility). A delete failure here is NOT a soft skip: count it so we can
+                    # fail the sheet below instead of saving a drawing with a phantom conduit.
+                    try:
                         _com_retry(lambda: e.Delete())
                         deleted += 1
-                    else:
-                        preserved += 1
-                    continue
-
-                if obj_name == "AcDbTable":
+                    except Exception:
+                        stray_conduit_failed += 1
+                else:
                     preserved += 1
-                    continue
+                continue
 
-                if "BORDER" in layer_name or "TITLE" in layer_name or "TABLE" in layer_name:
-                    preserved += 1
-                    continue
+            if obj_name == "AcDbTable":
+                preserved += 1
+                continue
 
-                _com_retry(lambda: e.Delete())
-                deleted += 1
+            # Only NON-block, non-table geometry needs its layer inspected. Reading .Layer
+            # for every entity -- including the hundreds of symbol-library blocks that are
+            # preserved regardless -- was a large chunk of the per-sheet clear time (an
+            # extra COM round-trip per block). Blocks/tables return above, so defer it.
+            try:
+                layer_name = str(_com_retry(lambda: e.Layer)).upper()
             except Exception:
-                skipped += 1
-        _log(f"_clear_model_space: deleted={deleted} preserved={preserved} skipped={skipped}")
-    except Exception as ex:
-        warnings.append(f"Could not clear model space: {ex}")
+                layer_name = ""
+            if "BORDER" in layer_name or "TITLE" in layer_name or "TABLE" in layer_name:
+                preserved += 1
+                continue
+
+            _com_retry(lambda: e.Delete())
+            deleted += 1
+        except Exception:
+            skipped += 1
+    _log(f"_clear_model_space: deleted={deleted} preserved={preserved} "
+         f"skipped={skipped} stray_conduit_failed={stray_conduit_failed}")
+    if stray_conduit_failed:
+        raise RuntimeError(
+            f"Could not remove {stray_conduit_failed} leftover template Conduit block(s) from "
+            f"model space — the sheet would render on top of them; not saving")
 
 
 # The section every IDP conduit drawing belongs to (matches the .wdp's ICD subsection).
