@@ -42,20 +42,17 @@ if printf '%s\n' "$CHANGED" | grep -q '^requirements\.txt$'; then
 fi
 
 # ── 2. Frontend: rebuild dist only if the frontend source changed ─────────────
+# Delegate to Build/ensure-frontend.ps1 (the single source of truth used by SETUP and LAUNCH):
+# it rebuilds dist and, if this PC has no Node at all, auto-provisions a portable Node 20 first --
+# so a pull that touches the UI never leaves you stuck for a missing toolchain.
 if printf '%s\n' "$CHANGED" | grep -q '^Frontend/frontend/src/'; then
-  NPM=""
-  if command -v npm >/dev/null 2>&1; then
-    NPM="npm"
-  elif [ -f "/c/node20/node-v20.18.1-win-x64/npm.cmd" ]; then
-    export PATH="/c/node20/node-v20.18.1-win-x64:$PATH"
-    NPM="/c/node20/node-v20.18.1-win-x64/npm.cmd"
-  fi
-  if [ -n "$NPM" ]; then
+  if [ -f "Build/ensure-frontend.ps1" ] && command -v powershell >/dev/null 2>&1; then
     echo "[post-merge] frontend source changed -> rebuilding dist ..."
-    ( cd Frontend/frontend && "$NPM" run build ) && echo "[post-merge] frontend rebuilt."
+    powershell -NoProfile -ExecutionPolicy Bypass -File "Build/ensure-frontend.ps1" -Force \
+      && echo "[post-merge] frontend rebuilt." \
+      || echo "[post-merge] frontend rebuild failed -- run: powershell -File Build/ensure-frontend.ps1 -Force"
   else
-    echo "[post-merge] frontend source changed but Node/npm not found."
-    echo "[post-merge]   rebuild manually:  cd Frontend/frontend && npm run build"
+    echo "[post-merge] frontend source changed -- rebuild with: powershell -File Build/ensure-frontend.ps1 -Force"
   fi
 fi
 
