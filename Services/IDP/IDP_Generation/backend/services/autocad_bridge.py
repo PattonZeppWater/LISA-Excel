@@ -2048,20 +2048,24 @@ def _match_vis_state(vis_state: str, allowed: list):
 def _apply_visibility(block_ref, vis_state, warnings: list):
     """Set a dynamic block's visibility state (e.g. 'Field_4Term').
 
-    Best-effort: finds the visibility dynamic-property and sets it to the closest
-    matching real state. Wrapped so a failure never aborts generation.
+    Best-effort + busy-safe: finds the visibility dynamic-property and sets it to the closest
+    matching real state. EVERY COM call is _com_retry-wrapped (like _apply_dyn_props) so a
+    transient 'Call was rejected by callee' -- AutoCAD momentarily busy -- is retried instead of
+    silently leaving the visibility unset (which dropped the continuation marker on split conduits
+    and the terminal-capacity state on instruments). Retries only fire ON failure, so a normal
+    sheet pays nothing. A genuine failure still never aborts generation.
     """
     if not vis_state:
         return
     try:
-        if not block_ref.IsDynamicBlock:
+        if not _com_retry(lambda: block_ref.IsDynamicBlock, any_error=True):
             return
-        props = block_ref.GetDynamicBlockProperties()
+        props = _com_retry(lambda: block_ref.GetDynamicBlockProperties(), any_error=True)
         # find the visibility property (by name, else whichever lists the state)
         visprop = None
         for p in props:
             try:
-                if "visibility" in str(p.PropertyName).lower():
+                if "visibility" in str(_com_retry(lambda pp=p: pp.PropertyName, any_error=True)).lower():
                     visprop = p
                     break
             except Exception:
@@ -2069,7 +2073,7 @@ def _apply_visibility(block_ref, vis_state, warnings: list):
         if visprop is None:
             for p in props:
                 try:
-                    allowed = [str(a) for a in (p.AllowedValues or [])]
+                    allowed = [str(a) for a in (_com_retry(lambda pp=p: pp.AllowedValues, any_error=True) or [])]
                 except Exception:
                     allowed = []
                 if _match_vis_state(str(vis_state), allowed) in allowed:
@@ -2079,15 +2083,15 @@ def _apply_visibility(block_ref, vis_state, warnings: list):
             warnings.append(f"no visibility property for state '{vis_state}'")
             return
         try:
-            allowed = [str(a) for a in (visprop.AllowedValues or [])]
+            allowed = [str(a) for a in (_com_retry(lambda: visprop.AllowedValues, any_error=True) or [])]
         except Exception:
             allowed = []
         target = _match_vis_state(str(vis_state), allowed)
         if target is None:
             warnings.append(f"visibility '{vis_state}' not in {allowed}")
             return
-        visprop.Value = target
-        block_ref.Update()
+        _com_retry(lambda: setattr(visprop, "Value", target), any_error=True)
+        _com_retry(lambda: block_ref.Update(), any_error=True)
     except Exception as e:
         warnings.append(f"apply visibility '{vis_state}' failed: {e}")
 
