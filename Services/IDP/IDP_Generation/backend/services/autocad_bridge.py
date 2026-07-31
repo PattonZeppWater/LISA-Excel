@@ -1047,7 +1047,10 @@ def _add_mtext(model, x: float, y: float, text: str, height: float, width: float
     try:
         mt = _com_retry(lambda: model.AddMText(_pt(x, y), float(width), str(text)), any_error=True)
         try:
-            mt.Height = float(height)
+            # Retry the height write like every other COM call here: a transient 'rejected by
+            # callee' on this one raw setter used to be eaten by the except-pass, leaving the
+            # REF. DWG callout at AutoCAD's default text height on a sheet that still saved ✓.
+            _com_retry(lambda: setattr(mt, "Height", float(height)), any_error=True)
         except Exception:
             pass
         if attach is not None:
@@ -1711,14 +1714,22 @@ def _try_set_title_block_attrs_once(doc, values: dict, warnings: list) -> bool:
             tags = {}
             for a in attrs:
                 try:
-                    tags.setdefault(str(a.TagString).upper(), []).append(a)
+                    # a.TagString is itself a COM read that can transiently fail on a busy
+                    # session; retry it (any_error) so a hiccup doesn't drop a tag from the
+                    # map -- which would silently leave that title-block attribute unwritten.
+                    tags.setdefault(str(_com_retry(lambda a=a: a.TagString, any_error=True)).upper(), []).append(a)
                 except Exception:
                     pass
             set_count = 0
             for tag, val in values.items():
                 for a in tags.get(tag.upper(), []):
                     try:
-                        a.TextString = val
+                        # Retry the actual write on ANY transient error (same gap that once
+                        # dropped _apply_visibility's set): a raw `a.TextString = val` that hits
+                        # a momentary 'rejected by callee' used to be swallowed into the warning
+                        # below, leaving the title-block attribute blank on a sheet that still
+                        # saved ✓. _com_retry fires only on failure, so a good sheet pays nothing.
+                        _com_retry(lambda a=a, val=val: setattr(a, "TextString", val), any_error=True)
                         set_count += 1
                     except Exception as ex:
                         warnings.append(f"Could not set title block attribute {tag!r}: {ex}")
@@ -1824,10 +1835,20 @@ _ALIGN_MIDDLE_CENTER = 5
 
 def _find_index_table(doc):
     """The first AcDbTable in a drawing-index sheet's model space (the DRAWING INDEX table),
-    or None. The index table is the only AcDbTable on the G2 sheet."""
-    for e in doc.ModelSpace:
+    or None. The index table is the only AcDbTable on the G2 sheet.
+
+    Index-based scan with every COM read _com_retry-wrapped, mirroring _fill_ref_docs_table's
+    hardened search: a transient '-2147418111 Call was rejected by callee' on the real table's
+    .ObjectName used to be swallowed by the `except: continue`, so the table was skipped and this
+    returned None -- and populate_drawing_index then STILL SaveAs'd the sheet with the index left
+    as the unfilled template placeholder while reporting ✓. Retrying the reads self-heals the
+    hiccup; a genuine failure still exhausts the retries and is skipped exactly as before."""
+    ms = _com_retry(lambda: doc.ModelSpace, any_error=True)
+    n = int(_com_retry(lambda: ms.Count, any_error=True))
+    for i in range(n):
         try:
-            if e.ObjectName == "AcDbTable":
+            e = _com_retry(lambda i=i: ms.Item(i), any_error=True)
+            if str(_com_retry(lambda e=e: e.ObjectName, any_error=True)) == "AcDbTable":
                 return e
         except Exception:
             continue
@@ -2732,20 +2753,26 @@ def _fill_ref_docs_table(model, ref_doc_rows: list, dev_rows: list, warnings: li
     (Dev_Nums) against the Ref Documents #→text lookup — actual numbers, no renumber.
     """
     # Locate the supporting documents table by scanning for recognisable header text.
+    # Every COM read in this scan is _com_retry(any_error)-wrapped: on a busy Generate All a
+    # transient 'rejected by callee' on model.Count / model.Item / obj.ObjectName / obj.Rows /
+    # obj.Columns / obj.GetText used to falsely report "table not found" (or skip the real
+    # table object), so the sheet saved with an EMPTY supporting-documents / deviations table
+    # while still reporting ✓. Retrying the reads self-heals the hiccup; a genuine failure
+    # still exhausts the retries and is handled exactly as before (skip object / warn+return).
     table = None
     try:
-        for i in range(model.Count):
+        for i in range(int(_com_retry(lambda: model.Count, any_error=True))):
             try:
-                obj = model.Item(i)
-                if str(obj.ObjectName) != "AcDbTable":
+                obj = _com_retry(lambda i=i: model.Item(i), any_error=True)
+                if str(_com_retry(lambda obj=obj: obj.ObjectName, any_error=True)) != "AcDbTable":
                     continue
-                trows = int(obj.Rows)
-                tcols = int(obj.Columns)
+                trows = int(_com_retry(lambda obj=obj: obj.Rows, any_error=True))
+                tcols = int(_com_retry(lambda obj=obj: obj.Columns, any_error=True))
                 found = False
                 for r in range(min(3, trows)):
                     for c in range(tcols):
                         try:
-                            txt = str(obj.GetText(r, c)).upper()
+                            txt = str(_com_retry(lambda r=r, c=c, obj=obj: obj.GetText(r, c), any_error=True)).upper()
                             if "DRAWING" in txt or "SUPPORTING" in txt or "DESCRIPTION" in txt:
                                 found = True
                                 break
@@ -2767,8 +2794,8 @@ def _fill_ref_docs_table(model, ref_doc_rows: list, dev_rows: list, warnings: li
         _log("_fill_ref_docs_table: table not found")
         return
 
-    table_rows = int(table.Rows)
-    table_cols = int(table.Columns)
+    table_rows = int(_com_retry(lambda: table.Rows, any_error=True))
+    table_cols = int(_com_retry(lambda: table.Columns, any_error=True))
     _log(f"_fill_ref_docs_table: table found  rows={table_rows} cols={table_cols}  filling {len(ref_doc_rows)} row(s)")
 
     written = 0
