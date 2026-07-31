@@ -437,7 +437,11 @@ def generate():
     # them apart both from an unrelated stray .dwg AND from an EARLIER project that reused
     # the same output folder and happened to share a conduit tag (project_number is what
     # tells those two apart -- cond_tag alone isn't enough).
-    if not errors and out_paths:
+    #
+    # ONLY in make-project mode: this JSON sidecar (_idp_dwg_descriptions.json) is consumed
+    # solely by /finalize-project's .wdp / drawing-index assembly. In plain (non-project) mode
+    # there is no finalize, so we write NOTHING but the .dwg itself -- no sidecar, no .wdp.
+    if not errors and out_paths and make_project:
         wdp_writer.record_dwg_descriptions(
             output_folder,
             [os.path.basename(p) for p in out_paths],
@@ -448,30 +452,10 @@ def generate():
             project_number=project_number,
         )
 
-    # Every Cond_Tag currently in the loaded workbook's ConduitIndex -- passed to the .wdp/
-    # .aepx writers so they only ever list drawings that belong to THIS workbook (plus the
-    # GENERAL sheets), never a stray .dwg left in the output folder by a different project/
-    # run or by a conduit since removed from this one.
-    valid_cond_tags = [
-        str(r.get("Cond_Tag")).strip()
-        for r in conduit_index
-        if str(r.get("Cond_Tag") or "").strip()
-    ]
-
-    # Write/refresh the AutoCAD Electrical project file in the output folder, named after the
-    # project number. Best-effort: never let a project-file problem fail the generation.
-    #
-    # NOTE: full-project assembly (copy GENERAL sheets, fill their title blocks over COM,
-    # populate the drawing index, write the sectioned .wdp/.aepx) is NO LONGER done here per
-    # conduit -- it runs ONCE via /finalize-project after the whole project is generated (see
-    # that route). Doing it per conduit re-opened G1-G3 over COM on every Generate-All step.
-    # Here we only record this conduit's descriptions (done above) so finalize can list it.
-    if not errors and project_number and not make_project:
-        # Non-project mode: keep the plain per-call drawing list under INTERCONNECTION
-        # DIAGRAMS (unchanged behavior -- there is no finalize step in this mode).
-        result["wdp_path"] = wdp_writer.write_project_wdp(
-            output_folder, project_number, project_info=project_desc,
-            valid_cond_tags=valid_cond_tags)
+    # Project files (.wdp/.aepx) are written ONLY when "Make it a project" is on -- and then
+    # just ONCE, via /finalize-project after every conduit is generated (full-project assembly
+    # re-opens G1-G3 over COM, so it must never run per conduit). In plain (non-project) mode we
+    # deliberately write NO .wdp: the user just wants the drawing(s) they generated, nothing else.
 
     return jsonify(result)
 
