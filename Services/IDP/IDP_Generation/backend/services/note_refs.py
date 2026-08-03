@@ -10,8 +10,10 @@ that points at the OTHER conduit's drawing, so a reader can find the counterpart
 FunctionID) read from whichever side (S/D) carries the Inst_* symbol — the fields the
 user confirmed match between the two conduits. This module is pure: it annotates each
 qualifying loop dict with loop["ref_dwg"] = the counterpart drawing number (a string like
-"73.1111-05s"); placement/COM lives in autocad_bridge. Nothing here touches the workbook.
+"73.1111-D.05"); placement/COM lives in autocad_bridge. Nothing here touches the workbook.
 """
+
+from . import wdp_writer
 
 
 def _norm(s) -> str:
@@ -59,16 +61,21 @@ def _loop_is_4w_instrument(loop) -> bool:
     return False
 
 
-def counterpart_dwg_number(conduit_index, cond_tag, project_number, file_suffix) -> str:
-    """The drawing NUMBER (no .dwg) a given conduit's FIRST sheet is saved as — must match
-    the real filename so the callout points at the right drawing.
+def counterpart_dwg_number(conduit_index, cond_tag, project_number, file_suffix=None) -> str:
+    """The drawing NAME the counterpart conduit's FIRST sheet is actually saved as — i.e. the
+    real sheet name the REF. DWG callout should show.
 
-    seq = the conduit's project-sequential START number (Seq_Start), which the parser
-    computes so continuation sheets consume consecutive numbers (a multi-sheet conduit at
-    15/16 pushes the next conduit to 17). Using Seq_Start — not the plain 1-based position —
-    is what keeps the REF number correct once any earlier conduit spans multiple sheets.
-    Falls back to position+1 for a conduit_index parsed by an older backend that didn't
-    stamp Seq_Start."""
+    It asks wdp_writer.conduit_drawing_no for that name — the SAME single source of truth
+    generate.py uses to NAME the .dwg files — rather than re-deriving the number with its own
+    format. That is what keeps the reference correct across a numbering-scheme change: the
+    callout is always literally the counterpart sheet's name (currently IC.EDC.S011
+    "<project>-D.NN"), never a separately-formatted guess that can drift out of sync.
+
+    `seq` is the conduit's project-sequential Seq_Start (continuation sheets consume consecutive
+    numbers, so a multi-sheet conduit at D.15/D.16 pushes the next conduit to D.17). Falls back
+    to 1-based position if an older backend didn't stamp Seq_Start, and to the sanitized Cond_Tag
+    for a non-project generate (where generate.py names the file "<Cond_Tag>.dwg"). `file_suffix`
+    is kept for call-site compatibility but the S011 drawing name does not use it."""
     row, idx = None, None
     for j, r in enumerate(conduit_index or []):
         if str(r.get("Cond_Tag") or "").strip() == str(cond_tag).strip():
@@ -80,9 +87,7 @@ def counterpart_dwg_number(conduit_index, cond_tag, project_number, file_suffix)
             seq = int(row.get("Seq_Start"))
         except (TypeError, ValueError):
             seq = idx + 1
-        safe_proj   = "".join(c for c in project_number if c.isalnum() or c in "-_.")
-        safe_suffix = "".join(c for c in str(file_suffix or "") if c.isalnum() or c in "-_.")
-        return f"{safe_proj}-{seq:02d}{safe_suffix}"
+        return wdp_writer.conduit_drawing_no(project_number, seq)
     return "".join(c for c in str(cond_tag) if c.isalnum() or c in "-_.")
 
 
