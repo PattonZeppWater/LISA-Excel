@@ -1223,6 +1223,54 @@ export default function IdpGeneration() {
 }
 
 
+// ── NEC fill pill ──────────────────────────────────────────────────────────
+// Fixed-footprint pill: the warning icon stays pinned and the message is clipped to the pill's
+// own rounded bounds with an ellipsis when it's too long, so it never spills outside the pill.
+// HOVER the pill and — only if the text actually overflows — it scrolls (billboard style) to
+// reveal the whole thing, then returns; short pills that already fit never move. A title tooltip
+// and a prefers-reduced-motion fallback keep the full text available without any motion. Pure UI
+// — nothing here touches generation.
+function FillPill({ variant, icon, text, title }) {
+  const vpRef = useRef(null);
+  const trackRef = useRef(null);
+  const [shift, setShift] = useState(0);   // px the text overflows the pill (0 = fits, no scroll)
+
+  useEffect(() => {
+    const vp = vpRef.current, track = trackRef.current;
+    if (!vp || !track) return;
+    const measure = () => {
+      const over = track.scrollWidth - vp.clientWidth;
+      setShift(over > 1 ? over : 0);
+    };
+    measure();
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(measure) : null;
+    if (ro) ro.observe(vp);
+    return () => { if (ro) ro.disconnect(); };
+  }, [text]);
+
+  const overflowing = shift > 0;
+  return (
+    <span className={`idp-fillpill ${variant}`} title={title}>
+      {icon && <span className="idp-fillpill-icon">{icon}</span>}
+      <span className="idp-fillpill-viewport" ref={vpRef}>
+        <span
+          ref={trackRef}
+          className={`idp-fillpill-track${overflowing ? " overflowing" : ""}`}
+          style={overflowing ? {
+            // hover-scroll distance = the exact overflow; duration scales with it so the scan
+            // speed stays slow/constant regardless of how long the text is.
+            "--marquee-shift": `-${shift}px`,
+            "--marquee-dur": `${Math.max(6, 4 + shift * 0.05).toFixed(1)}s`,
+          } : undefined}
+        >
+          {text}
+        </span>
+      </span>
+    </span>
+  );
+}
+
+
 // ── AutoCAD status pill ────────────────────────────────────────────────────
 
 function AutoCADStatusPill({ autocad }) {
@@ -1409,16 +1457,17 @@ function ConduitTable({ rows, rowLoading, rowResult, onGenerate, onStop, onRemov
                       : <span style={{ color: "var(--status-error-soft)", fontSize: "0.82rem" }}>✗ see log</span>
                   )}
                   {fillPct != null && (
-                    <span
-                      className={`idp-fillpill ${overfill ? "over" : (fillOfLimit != null && fillOfLimit >= 90 ? "warn" : "ok")}`}
+                    <FillPill
+                      variant={overfill ? "over" : (fillOfLimit != null && fillOfLimit >= 90 ? "warn" : "ok")}
+                      icon={overfill ? "⚠" : null}
                       title={(overfillMsg ||
                         `NEC conduit fill: ${fillPct}% of the conduit's internal area` +
                         (fillOfLimit != null ? ` — ${fillOfLimit}% of the NEC-allowable fill` : "")) +
-                        (assumedType ? `  (conduit type not specified — assumed ${assumedType} for the area)` : "")}>
-                      {(overfill ? "⚠ " : "") + `Fill ${fillPct}%` +
+                        (assumedType ? `  (conduit type not specified — assumed ${assumedType} for the area)` : "")}
+                      text={`Fill ${fillPct}%` +
                         (fillOfLimit != null ? ` · ${fillOfLimit}% of limit` : "") +
                         (assumedType ? ` · ${assumedType}?` : "")}
-                    </span>
+                    />
                   )}
                 </div>
               </td>
