@@ -6,6 +6,32 @@
 <title>LISA · Autofill</title>
 <link rel="stylesheet" href="static/lisa.css">
 <link rel="stylesheet" href="static/panel.css">
+<script>
+/* Theme sync — the Autofill panel is a same-origin iframe inside LISA. It FOLLOWS
+   LISA's light/dark toggle (no separate button): read the parent app's live theme
+   (or the shared localStorage key it persists), then track changes via the storage
+   event LISA fires when it flips. Dark is the default, so if nothing is set the panel
+   looks exactly as before. Runs in <head> before paint to avoid a flash. */
+(function () {
+  function readTheme() {
+    try {
+      if (window.parent && window.parent !== window) {
+        try {
+          var pt = window.parent.document.documentElement.getAttribute('data-theme');
+          if (pt) return pt === 'light' ? 'light' : 'dark';
+        } catch (e) { /* cross-origin (shouldn't happen) — fall through */ }
+      }
+      return localStorage.getItem('lisa_theme') === 'light' ? 'light' : 'dark';
+    } catch (e) { return 'dark'; }
+  }
+  function apply(t) { document.documentElement.setAttribute('data-theme', t === 'light' ? 'light' : 'dark'); }
+  apply(readTheme());
+  window.addEventListener('storage', function (e) {
+    if (e.key === 'lisa_theme') apply(e.newValue === 'light' ? 'light' : 'dark');
+  });
+  document.addEventListener('visibilitychange', function () { if (!document.hidden) apply(readTheme()); });
+})();
+</script>
 </head>
 <body>
 <div class="app">
@@ -129,9 +155,12 @@
           <button class="btn-primary ghost" onclick="logicUndo()" title="Restore the rules from your last delete">↺ Undo delete</button>
           <button class="btn-primary ghost" onclick="logicMultiDelete()" title="Delete every checked rule (asks for confirmation first)">🗑 Delete selected</button>
           <button class="btn-primary ghost" onclick="logicExport()" title="Download the CURRENT rule set as a CSV (read live from disk — never stale)">⭳ Download rule set</button>
+          <button class="btn-primary ghost" onclick="logicImport()" title="Upload a rule set you previously downloaded (CSV or JSON) and MERGE it into the current rules">⬆ Upload rule set</button>
+          <button class="btn-primary ghost" onclick="logicClearAll()" title="Remove ALL rules, including built-in defaults (you can restore them with Undo delete)">🧹 Clear all rules</button>
           <button class="btn-primary ghost" onclick="logicReload()" title="Reload the rules from disk">⟳ Reload</button>
           <span class="key-hint" id="logic_status" style="margin-left:auto"></span>
         </div>
+        <input type="file" id="logic_import_file" accept=".csv,.json,text/csv,application/json" style="display:none" onchange="logicImportFile(this)">
         <div id="logic_form" class="logic-form" style="display:none">
           <select class="sel" id="lf_type" title="Rule type">
             <option value="symbol_keyword">symbol_keyword (device → symbol)</option>
@@ -159,7 +188,7 @@
         </tr></thead><tbody></tbody></table>
       </div></div></section>
 
-    <section class="page" id="page-sources"><div class="home"><h2 class="pg-title">Sources</h2><p class="pg-sub">Per-cell provenance from the last run — which source file each value came from.</p><div class="card"><div class="row"><button class="btn-primary" onclick="srcRefresh()" title="Reload provenance from the last scan">⟳ Refresh</button><button class="btn-primary ghost" onclick="srcExport()" title="Download the provenance as a CSV file">⭳ Export CSV</button></div><table class="tbl" id="src_tbl"><thead><tr><th>Conduit</th><th>Field</th><th>Source file</th></tr></thead><tbody></tbody></table><div class="key-hint" id="src_status"></div></div></div></section>
+    <section class="page" id="page-sources"><div class="home"><h2 class="pg-title">Sources</h2><p class="pg-sub">Per-cell provenance from the last run — which source file each value came from.</p><div class="card"><div class="row"><button class="btn-primary" onclick="srcRefresh()" title="Reload provenance from the last scan">⟳ Refresh</button><button class="btn-primary ghost" onclick="srcExport()" title="Download the provenance as a CSV file">⭳ Export CSV</button></div><table class="tbl" id="src_tbl"><thead><tr><th>Conduit</th><th>Sheet</th><th>Field</th><th>Value</th><th>Source</th></tr></thead><tbody></tbody></table><div class="key-hint" id="src_status"></div></div></div></section>
     <section class="page" id="page-training"><div class="home"><h2 class="pg-title">Training</h2><p class="pg-sub">Teach the tool by example: give it a project's plans, its finished IDPs, and the IDP we generated. It compares them, learns the safe gaps into Remembered Logic + the Claude skills, and archives a new version that other computers can update to.</p>
 
       <!-- password gate — shown until the correct password unlocks the training body -->
@@ -201,6 +230,7 @@
       </div>
       <div class="run-row">
         <button class="run-btn" id="train_btn" onclick="runTraining()" title="Compare finished IDPs vs our output, learn safe corrections, and snapshot a new version">▶  Compare &amp; Learn</button>
+        <button class="btn-primary" id="publish_btn" onclick="publishVersion()" title="Snapshot the CURRENT build (including any changes made via Claude) and publish it as a NEW version to the shared/server Version Control folder — so everyone else can press Update to get it. No training run needed.">⬆ Publish changes to server</button>
         <button class="btn-primary" onclick="askClaude()" title="Write a questions-for-Claude packet (and answer it via the API key if one is set)">Ask Claude about uncertainties</button>
         <button class="btn-primary ghost" onclick="downloadUncertainties()" title="Build the questions packet and choose where to save it (a Save-As dialog lets you pick the folder/filename; falls back to your browser Downloads if the dialog isn't available).">⭳ Download uncertainties…</button>
       </div>

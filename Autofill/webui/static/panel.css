@@ -94,3 +94,69 @@ tr.row-manual td:first-child { box-shadow: inset 3px 0 0 #e6a817; }
 .pill:hover { color: #c8d8e8; border-color: #2a5a8a; }
 .pill.active { background: #1e3a5f; color: #ffffff; border-color: #4a9fd4; }
 .subnav-opts { margin-left: auto; display: flex; align-items: center; gap: 1.1rem; flex-wrap: wrap; }
+
+/* ── LIGHT MODE ───────────────────────────────────────────────────────────────
+   Mirrors LISA's light theme. Everything here is scoped to :root[data-theme="light"]
+   so DARK (default / no attribute) is byte-for-byte unchanged. Colors use LISA's
+   light palette. The hero (.home-hero + .pillars + .hero-* ) is intentionally left
+   dark in both themes, exactly like LISA's Home hero — so it's NOT overridden here.
+   Vivid CTA gradients (.run-btn / .cancel-btn / .update-btn) also stay as-is, like LISA. */
+:root[data-theme="light"] body { background: #f4f7fb; color: #14293e; }
+:root[data-theme="light"] .main-content { background: #ffffff; }
+
+/* base controls carried from lisa.css */
+:root[data-theme="light"] .btn { background: #dce9f6; color: #14293e; }
+:root[data-theme="light"] .btn:hover { background: #c3dbf1; }
+:root[data-theme="light"] .btn-primary { background: #dce9f6; color: #14293e; border-color: #a9c2da; }
+:root[data-theme="light"] .btn-primary:hover:not(:disabled) { background: #c3dbf1; }
+:root[data-theme="light"] .btn-primary:disabled { background: #eef3f9; color: #9fb3c6; border-color: #d3e0ee; }
+:root[data-theme="light"] .btn-primary.ghost { background: transparent; }
+:root[data-theme="light"] .btn-primary.ghost:hover:not(:disabled) { background: #e0eaf5; }
+:root[data-theme="light"] .status-msg { color: #4a6b8a; }
+:root[data-theme="light"] .drop-zone { background: #eef3f9; border-color: #a9c2da; }
+:root[data-theme="light"] .drop-zone:hover { background: #e0eaf5; border-color: #2f7fb8; }
+:root[data-theme="light"] .drop-zone.dragging { background: #d3e4f5; border-color: #2f7fb8; }
+:root[data-theme="light"] .drop-zone.has-file { background: #eef3f9; border-color: #a9c2da; }
+:root[data-theme="light"] .drop-zone-primary { color: #14293e; }
+:root[data-theme="light"] .drop-zone-filename { color: #2f7fb8; }
+:root[data-theme="light"] .drop-zone-hint { color: #5b7690; }
+:root[data-theme="light"] .loading-indicator { background: #eef3f9; border-color: #a9c2da; color: #2f7fb8; }
+:root[data-theme="light"] .spinner { border-color: #c9d8e8; border-top-color: #2f7fb8; }
+
+/* panel controls */
+:root[data-theme="light"] .mini-check { color: #3f6389; }
+:root[data-theme="light"] .pg-title { color: #14293e; }
+:root[data-theme="light"] .pg-sub { color: #5b7690; }
+:root[data-theme="light"] .card { background: #ffffff; border-color: #c9d8e8; }
+:root[data-theme="light"] .card-label { color: #4a6b8a; }
+:root[data-theme="light"] .txt { background: #ffffff; color: #14293e; border-color: #a9c2da; }
+:root[data-theme="light"] .txt:focus { border-color: #2f7fb8; }
+:root[data-theme="light"] .sel { background: #ffffff; color: #14293e; border-color: #a9c2da; }
+:root[data-theme="light"] .file-list li { color: #14293e; background: #eef3f9; }
+:root[data-theme="light"] .file-list li .fx { color: #4a6b8a; }
+:root[data-theme="light"] .opt-lbl { color: #4a6b8a; }
+:root[data-theme="light"] .rad, :root[data-theme="light"] .chk { color: #14293e; }
+:root[data-theme="light"] .recent-lbl { color: #4a6b8a; }
+:root[data-theme="light"] .recent-chip { background: #eef3f9; color: #2f7fb8; border-color: #c9d8e8; }
+:root[data-theme="light"] .recent-chip:hover { background: #e0eaf5; border-color: #a9c2da; color: #14293e; }
+:root[data-theme="light"] .key-hint { color: #5b7690; }
+:root[data-theme="light"] .key-hint.key-ok { color: #1f9e54; }
+:root[data-theme="light"] .update-status.ok { color: #1f9e54; background: #e6f6ee; border-color: #bfe6d0; }
+:root[data-theme="light"] .update-status.warn { color: #b07d0a; background: #fbf3dd; border-color: #ecd9a0; }
+:root[data-theme="light"] .update-status.busy { color: #2f7fb8; background: #eaf3fb; border-color: #c9d8e8; }
+:root[data-theme="light"] .update-txt.good { color: #1f9e54; }
+:root[data-theme="light"] .update-txt.bad { color: #c0392b; }
+:root[data-theme="light"] .update-txt.busy { color: #2f7fb8; }
+:root[data-theme="light"] .update-txt.neutral { color: #4a6b8a; }
+:root[data-theme="light"] .src-badge.manual { color: #b07d0a; background: #fbf3dd; border-color: #ecd9a0; }
+:root[data-theme="light"] .src-badge.gen { color: #4a6b8a; background: #eef3f9; border-color: #c9d8e8; }
+:root[data-theme="light"] tr.row-manual { background: #fbf6e3; }
+:root[data-theme="light"] .logic-form { background: #ffffff; border-color: #c9d8e8; }
+:root[data-theme="light"] .log { background: #f4f6f9; border-color: #c9d8e8; color: #14293e; }
+:root[data-theme="light"] .tbl th { color: #4a6b8a; border-bottom-color: #c9d8e8; }
+:root[data-theme="light"] .tbl td { color: #14293e; border-bottom-color: #e5edf5; }
+:root[data-theme="light"] .tbl tr:hover td { background: #f0f5fa; }
+:root[data-theme="light"] .subnav { background: #ffffff; }
+:root[data-theme="light"] .pill { background: #eef3f9; color: #4a6b8a; border-color: #c9d8e8; }
+:root[data-theme="light"] .pill:hover { color: #14293e; border-color: #a9c2da; }
+:root[data-theme="light"] .pill.active { background: #dce9f6; color: #14293e; border-color: #2f7fb8; }

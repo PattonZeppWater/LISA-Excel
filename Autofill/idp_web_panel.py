@@ -41,6 +41,17 @@ idp_bp = Blueprint("idp", __name__, static_folder=os.path.join(_WEB, "static"),
                    static_url_path="/static")
 
 
+@idp_bp.after_request
+def _no_cache(resp):
+    """Never cache the Autofill panel or its JS/CSS. Without this, after an Update overwrites
+    app.js / index.html the WebView keeps serving the CACHED copy — so a machine reports the new
+    version but shows none of the new UI. Force a fresh load every time."""
+    resp.headers["Cache-Control"] = "no-store, must-revalidate"
+    resp.headers["Pragma"] = "no-cache"
+    resp.headers["Expires"] = "0"
+    return resp
+
+
 @idp_bp.route("/")
 def _index():
     return send_from_directory(os.path.join(_WEB, "templates"), "index.html")
@@ -203,6 +214,7 @@ class _State:
         self.last_training = None
         self.update_lines = []
         self.update_running = False
+        self.update_applied = False   # an Update just copied a newer version → offer auto-reload
         self.provenance = []
         self.train_lines = []
         self.train_running = False
@@ -776,6 +788,8 @@ class Api:
         pull = (path or "").strip().strip('"') or idp_settings.get_version_pull_dir()
         STATE.update_lines = []
 
+        STATE.update_applied = False
+
         def _u():
             STATE.update_running = True
             try:
@@ -786,8 +800,10 @@ class Api:
                 elif not res.get("updated"):
                     STATE.update_lines.append(res.get("note", "Already up to date."))
                 else:
+                    STATE.update_applied = True
                     STATE.update_lines.append(
-                        f"✔ Updated to v{res['version']} — restart LISA to load it.")
+                        f"✔ Updated to v{res['version']} — reloading LISA to finish (no manual "
+                        "restart needed) …")
             except Exception as e:
                 STATE.update_lines.append(f"update error: {e}")
             finally:
@@ -796,7 +812,46 @@ class Api:
         return True
 
     def poll_update(self):
-        return {"log": "\n".join(STATE.update_lines), "running": STATE.update_running}
+        return {"log": "\n".join(STATE.update_lines), "running": STATE.update_running,
+                "applied": STATE.update_applied}
+
+    def restart_app(self):
+        """Relaunch LISA in a FRESH process (so just-updated code actually loads) and close this
+        window — so an Update finishes without the user manually quitting + reopening. New code
+        can't hot-swap into a running Python process, so a fresh process is the only correct way;
+        this just automates it. Best-effort: on failure, tells the user to restart manually."""
+        import subprocess
+        try:
+            root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # LISA fused root
+            app_py = os.path.join(root, "app.py")
+            if not os.path.isfile(app_py):
+                return {"ok": False, "error": "app.py not found — please restart LISA manually."}
+            # launch a fresh, detached instance (it loads the updated code + picks a free port)
+            flags = 0
+            if os.name == "nt":
+                flags = 0x00000008 | 0x00000200   # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+            subprocess.Popen([sys.executable, app_py], cwd=root, close_fds=True,
+                             creationflags=flags)
+
+            # close THIS window a moment later, so the HTTP response returns and the new instance
+            # can start binding before we release. Hard-exit guarantees the old process ends.
+            def _close():
+                import time
+                time.sleep(1.5)
+                try:
+                    import webview
+                    for w in list(getattr(webview, "windows", []) or []):
+                        try:
+                            w.destroy()
+                        except Exception:
+                            pass
+                except Exception:
+                    pass
+                os._exit(0)
+            threading.Thread(target=_close, daemon=True).start()
+            return {"ok": True, "restarting": True}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     # ── version-control paths + training password (used by the Autofill panel) ───────
     def get_version_paths(self):
@@ -946,15 +1001,25 @@ class Api:
     def provenance(self):
         return STATE.provenance
 
+    @staticmethod
+    def _prov_row(row):
+        """A provenance entry as (Conduit, Sheet, Field, Value, Source). build_provenance emits
+        DICTS; tolerate a legacy tuple too so this never renders key-names or blanks again."""
+        if isinstance(row, dict):
+            return [row.get("conduit", ""), row.get("sheet", ""), row.get("field", ""),
+                    row.get("value", ""), row.get("source", "")]
+        row = list(row) + ["", "", "", "", ""]
+        return row[:5]
+
     def provenance_csv(self):
         """Provenance as CSV TEXT for an in-browser download (a native Save dialog is
         unreliable inside LISA's iframe, so the panel downloads this text instead)."""
         import io
         buf = io.StringIO()
         w = csv.writer(buf)
-        w.writerow(("Conduit", "Field", "Source"))
+        w.writerow(("Conduit", "Sheet", "Field", "Value", "Source"))
         for row in (STATE.provenance or []):
-            w.writerow(list(row)[:3])
+            w.writerow(self._prov_row(row))
         return {"ok": True, "text": buf.getvalue(), "rows": len(STATE.provenance or [])}
 
     def provenance_export(self):
@@ -965,8 +1030,10 @@ class Api:
         path = r if isinstance(r, str) else (r[0] if r else "")
         if not path:
             return ""
+        rows = [("Conduit", "Sheet", "Field", "Value", "Source")]
+        rows += [self._prov_row(row) for row in STATE.provenance]
         with open(path, "w", newline="", encoding="utf-8") as fh:
-            csv.writer(fh).writerows([("Conduit", "Field", "Source")] + list(STATE.provenance))
+            csv.writer(fh).writerows(rows)
         return path
 
     def conduit_index(self):
@@ -1015,6 +1082,78 @@ class Api:
                         r.get("context", ""), r.get("note", ""),
                         logic_store.rule_source(r)])
         return {"ok": True, "text": buf.getvalue(), "rows": len(rules)}
+
+    @staticmethod
+    def _parse_ruleset(text, fmt=None):
+        """Parse imported rule-set text into rule dicts {type,match,result,context,note,source}.
+        Accepts the CSV that 'Download rule set' emits (Type,Match,Result,Context,Note,Source) OR
+        a learned_logic.json ({"rules":[...]} or a bare [...]). Only rows with a KNOWN type and a
+        non-empty match survive, so a stray/garbage file can't inject junk rules."""
+        import io, json as _json
+        t = (text or "").strip()
+        raw = []
+        looks_json = (fmt == "json") or t[:1] in ("{", "[")
+        if looks_json:
+            data = _json.loads(t)
+            src = data.get("rules", []) if isinstance(data, dict) else (data or [])
+            raw = [r for r in src if isinstance(r, dict)]
+        else:
+            for row in csv.DictReader(io.StringIO(t)):
+                low = {(k or "").strip().lower(): (v or "") for k, v in row.items()}
+                raw.append({"type": low.get("type", ""), "match": low.get("match", ""),
+                            "result": low.get("result", ""), "context": low.get("context", ""),
+                            "note": low.get("note", ""), "source": low.get("source", "")})
+        out = []
+        for r in raw:
+            typ = str(r.get("type", "")).strip().lower()
+            match = str(r.get("match", "")).strip()
+            if typ not in logic_store.RULE_TYPES or not match:
+                continue
+            src = "manual" if str(r.get("source", "")).strip().lower() == "manual" else "generated"
+            out.append({"type": typ, "match": match, "result": str(r.get("result", "")).strip(),
+                        "context": str(r.get("context", "")).strip(),
+                        "note": str(r.get("note", "")).strip(), "source": src})
+        return out
+
+    def logic_import(self, text, fmt=None):
+        """Upload a rule set (CSV or JSON) and MERGE it into the current Remembered Logic — adds
+        new rules, skips ones already present (by type/match/context/result), and un-suppresses any
+        that had been deleted. Pairs with 'Clear all rules' for a clean replace. Returns
+        {ok, added, skipped, total}."""
+        try:
+            parsed = self._parse_ruleset(text or "", fmt)
+        except Exception as e:
+            return {"ok": False, "error": "could not read the file (%s)" % e}
+        if not parsed:
+            return {"ok": False, "error": "no valid rules found in the file."}
+        try:
+            existing = {logic_store._rkey(r) for r in logic_store._raw().get("rules", [])}
+            added = 0
+            for r in parsed:
+                k = logic_store._rkey(r)
+                if k in existing:
+                    continue
+                logic_store.add_rule(r, source=r.get("source") or "manual")
+                existing.add(k)
+                added += 1
+            logic_store.apply()
+            return {"ok": True, "added": added, "skipped": len(parsed) - added, "total": len(parsed)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
+
+    def logic_clear_all(self):
+        """Remove EVERY Remembered-Logic rule (including built-in defaults — suppressed via the
+        store's `removed` list so they don't re-merge on reload). Stashes the cleared rules so
+        '↺ Undo delete' restores them all. Returns {ok, removed}."""
+        try:
+            visible = logic_store.load().get("rules", [])
+            keys = [list(logic_store._rkey(r)) for r in visible]
+            removed = logic_store.delete_rules(keys)
+            STATE.logic_undo = list(removed)
+            logic_store.apply()
+            return {"ok": True, "removed": len(removed)}
+        except Exception as e:
+            return {"ok": False, "error": str(e)}
 
     def _uncertainties_packet(self):
         """(text, count, note) for the open uncertainties — also writes the .md packet to disk.
@@ -1163,6 +1302,39 @@ class Api:
                 STATE.train_running = False
         threading.Thread(target=_t, daemon=True).start()
         return True
+
+    def publish_version(self):
+        """PUBLISH the CURRENT build to the shared/server Version Control folder as a new
+        version — snapshots the whole app folder AS IT IS RIGHT NOW (so ANY change, including
+        edits made via Claude, is captured), bumps the version, and copies it to the server so
+        every other install's Update button can pull it. No training/Compare-&-Learn needed."""
+        if not STATE.train_unlocked:
+            STATE.train_lines = ["🔒 Training is locked — enter the training password first."]
+            return {"ok": False, "error": "locked"}
+        if STATE.train_running or STATE.running:
+            return {"ok": False, "error": "A scan or training is running — wait for it to finish."}
+        STATE.train_lines = []
+
+        def _pub():
+            try:
+                STATE.train_running = True
+                import idp_versioning, idp_settings
+                push = idp_settings.get_version_push_dir()
+                STATE.tlog(f"Publishing the current build to: {push} …")
+                res = idp_versioning.create_version(push_dir=push, log=STATE.tlog)
+                if res.get("published"):
+                    STATE.tlog(f"✔ Published v{res['version']} to {push}.")
+                    STATE.tlog("   Everyone else can now press UPDATE to get this version.")
+                else:
+                    STATE.tlog(f"✔ Archived v{res['version']} locally, but NOTHING was published — "
+                               "set the Version-control folder above to your SERVER path "
+                               "(\\\\server\\share\\…\\Version Control) and publish again.")
+            except Exception as e:
+                STATE.tlog(f"Publish error: {e}")
+            finally:
+                STATE.train_running = False
+        threading.Thread(target=_pub, daemon=True).start()
+        return {"ok": True, "started": True}
 
     def ask_claude(self):
         """Escalate the open uncertainties to Claude. If an API key is configured the

@@ -120,7 +120,18 @@ async function runUpdate() {
     if (!s) return;
     const logEl = document.getElementById('log');
     if (logEl) { logEl.textContent = s.log; logEl.scrollTop = 1e9; }
-    if (!s.running) { clearInterval(updTimer); updTimer = null; checkUpdate(); }
+    if (!s.running) {
+      clearInterval(updTimer); updTimer = null;
+      if (s.applied && a.restart_app) {
+        // a newer version was copied in — relaunch LISA automatically so the new code loads
+        // without the user manually closing + reopening.
+        const st2 = document.getElementById('update_status');
+        if (st2) { st2.textContent = 'Reloading LISA…'; st2.className = 'update-txt busy'; }
+        setTimeout(() => { a.restart_app(); }, 1200);
+      } else {
+        checkUpdate();
+      }
+    }
   }, 700);
 }
 // version-control folder pickers + persistence (hero path + training path)
@@ -294,6 +305,36 @@ async function logicExport(){
   if (r && r.ok) dl('remembered_logic_rules.csv', r.text, 'text/csv;charset=utf-8');
   else alert('Could not export the rule set' + (r && r.error ? ': '+r.error : '.'));
 }
+// Upload a rule set (the CSV/JSON you downloaded) and MERGE it into the current rules.
+function logicImport(){
+  const inp = document.getElementById('logic_import_file');
+  if (inp){ inp.value = ''; inp.click(); }        // reset first so re-picking the same file re-fires onchange
+}
+async function logicImportFile(input){
+  const f = input && input.files && input.files[0];
+  if (!f) return;
+  let text;
+  try { text = await f.text(); }
+  catch(e){ alert('Could not read the file: ' + e); return; }
+  const fmt = /\.json$/i.test(f.name) ? 'json' : (/\.csv$/i.test(f.name) ? 'csv' : null);
+  const a = api(); if (!a || !a.logic_import) return;
+  const r = await a.logic_import(text, fmt);
+  if (r && r.ok){
+    logicReload();
+    const extra = r.skipped ? ` (${r.skipped} already present)` : '';
+    alert(`Imported ${r.added} rule(s) from “${f.name}”${extra}.`);
+  } else {
+    alert('Could not import the rule set' + (r && r.error ? ': '+r.error : '.'));
+  }
+}
+// Remove ALL rules (defaults included). Restorable via Undo delete.
+async function logicClearAll(){
+  if (!confirm('Remove ALL remembered-logic rules?\n\nThis clears everything shown here, including the built-in defaults. You can restore them with “↺ Undo delete”.')) return;
+  const a = api(); if (!a || !a.logic_clear_all) return;
+  const r = await a.logic_clear_all();
+  if (r && r.ok) logicReload();
+  else alert('Could not clear the rules' + (r && r.error ? ': '+r.error : '.'));
+}
 async function logicAdd(){ logicAddForm(); }   // legacy alias
 
 // ── Conduit Index Mapping ──
@@ -320,7 +361,14 @@ async function srcRefresh() {
   const a = api(); if (!a) return;
   const rows = await a.provenance();
   const tb = document.querySelector('#src_tbl tbody'); tb.innerHTML = '';
-  (rows || []).forEach(r => { const tr = document.createElement('tr'); tr.innerHTML = `<td>${esc(r[0])}</td><td>${esc(r[1])}</td><td>${esc(r[2])}</td>`; tb.appendChild(tr); });
+  (rows || []).forEach(r => {
+    // build_provenance returns dicts {conduit, sheet, field, value, source}
+    const c = r.conduit ?? r[0] ?? '', sh = r.sheet ?? '', f = r.field ?? r[1] ?? '',
+          v = r.value ?? '', s = r.source ?? r[2] ?? '';
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${esc(c)}</td><td>${esc(sh)}</td><td>${esc(f)}</td><td>${esc(v)}</td><td title="${esc(s)}">${esc(s)}</td>`;
+    tb.appendChild(tr);
+  });
   const st = document.getElementById('src_status'); if (st) st.textContent = (rows||[]).length ? `${rows.length} provenance row(s).` : 'No provenance yet — run a scan.';
 }
 async function srcExport() {
@@ -385,6 +433,16 @@ async function askClaude() {
   const a = api(); if (!a || !a.ask_claude) return;
   await a.ask_claude();
   pollTrain();
+}
+async function publishVersion() {
+  const a = api(); if (!a || !a.publish_version) return;
+  if (!confirm('Publish the CURRENT build to the server as a new version?\n\nEveryone else will then be able to press Update to get it.')) return;
+  const btn = document.getElementById('publish_btn'); if (btn) btn.disabled = true;
+  const r = await a.publish_version();
+  if (r && r.ok) pollTrain();
+  else alert(r && r.error === 'locked' ? 'Enter the training password first.'
+             : 'Could not publish' + (r && r.error ? ': ' + r.error : '.'));
+  if (btn) setTimeout(() => { btn.disabled = false; }, 1500);
 }
 let trainTimer = null;
 function pollTrain() {

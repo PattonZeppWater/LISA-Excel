@@ -19,3 +19,4 @@
 # "Version Control" folder next to the app -- so nothing breaks before you set it.
 #
 # >>> put your server Version Control UNC path on the next line (no leading #):
+\\si-fs01\I&C\0. Engineers\Cole McLaughlin\LISA fused\Version Control
