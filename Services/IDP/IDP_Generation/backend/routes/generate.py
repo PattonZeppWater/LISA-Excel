@@ -133,12 +133,12 @@ def download_template():
 
 @idp_gen_bp.route("/autocad-status", methods=["GET"])
 def autocad_status():
-    """Check whether a running AutoCAD instance is accessible on this machine."""
+    """Check whether a running AutoCAD instance is accessible on this machine. Runs the COM
+    check on autocad_bridge's dedicated COM thread -- a raw GetActiveObject on a Flask worker
+    thread (threaded server) would fail 'CoInitialize has not been called' and wrongly report
+    AutoCAD as not running."""
     try:
-        import win32com.client
-        acad = win32com.client.GetActiveObject("AutoCAD.Application")
-        version = str(acad.Version)
-        return jsonify({"running": True, "version": version})
+        return jsonify(autocad_bridge.autocad_status())
     except Exception:
         return jsonify({"running": False, "version": None})
 
