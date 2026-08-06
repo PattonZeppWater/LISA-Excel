@@ -22,7 +22,7 @@ from flask import Flask, Blueprint, send_from_directory, request, jsonify
 from idp_ingest import (extract_source, merge_records, collect_wiring_bindings,
                         apply_wiring_terms, apply_project_dwg_symbols,
                         derive_teach_candidates, learn_from_finished_idps)
-from idp_write import write_workbook, degrey, versioned_path
+from idp_write import write_workbook, degrey, versioned_path, bake_greying
 import idp_project
 import idp_schedule
 import logic_store
@@ -576,6 +576,11 @@ def _scan_core(opts, st):
                              clear_rows=bool(opts.get("clear_rows", True)),
                              add_flags=bool(opts.get("flags", True)), clear_deviations=clr)
         log(f"Saved: {out}")
+        # Bake the FillIndex greying into the delivered workbook via its own Excel macro, so
+        # "not-applicable" cells are greyed on open — no need to enable macros or edit a dropdown.
+        # Best-effort: silently degrades to the ungreyed (but intact) workbook if Excel is absent.
+        if bool(opts.get("grey", True)):
+            bake_greying(out, log=log)
         if bool(opts.get("nogrey", True)):
             ng = versioned_path(os.path.splitext(out)[0] + "_NoGrey.xlsm")
             n = degrey(out, ng)
