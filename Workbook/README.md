@@ -1,10 +1,10 @@
 # IDP Workbook
 
-The macro-enabled Excel workbook (`IDP_Workbook_CurrentWIP_4.xlsm`) that engineers fill out to describe conduits and wire fills, which LISA's IDP Generation service reads to generate AutoCAD electrical IDP drawings.
+The macro-enabled Excel workbook (`IDP_Workbook.xlsm`) that engineers fill out to describe conduits and wire fills, which LISA's IDP Generation service reads to generate AutoCAD electrical IDP drawings.
 
 ## Contents
 
-- **`IDP_Workbook_CurrentWIP_4.xlsm`** — the actual workbook (binary, macro-enabled).
+- **`IDP_Workbook.xlsm`** — the actual workbook (binary, macro-enabled).
 - **`../vba/`** — the workbook's VBA source, exported as plain text so it's diffable and reviewable in git. This is the same code embedded in the `.xlsm`'s `vbaProject.bin` — the exported files are the readable source of truth; **edit them by re-exporting from the workbook after making changes in Excel's VBA editor** (or by importing them back in), not by hand-editing and expecting the `.xlsm` to pick them up automatically.
 
 ## VBA module map

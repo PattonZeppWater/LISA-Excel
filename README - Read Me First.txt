@@ -63,7 +63,7 @@ USING IT
 ------------------------------------------------------------
   - In LISA, go to the IDP Generation tab.
   - Load the workbook from the "Workbook" folder next to this
-    file:  IDP_Workbook_CurrentWIP_4.xlsm
+    file:  IDP_Workbook.xlsm
   - Pick a conduit and Generate. Make sure AutoCAD is open first.
   - Generated DWGs go to the output folder you choose in LISA.
 

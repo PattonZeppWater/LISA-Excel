@@ -2,7 +2,7 @@
 
 **LISA** is an internal AIC desktop app (Python/Flask backend, driven from a small React UI in a pywebview window) that automates a handful of engineering document-generation tasks, plus the companion Excel workbook that drives its main feature.
 
-- **IDP Generation** — reads the `Workbook/IDP_Workbook_CurrentWIP_4.xlsm` workbook and drives AutoCAD (via COM automation) to generate electrical Interconnection Diagram (IDP) drawings, plus the matching AutoCAD Electrical project file (`.wdp`).
+- **IDP Generation** — reads the `Workbook/IDP_Workbook.xlsm` workbook and drives AutoCAD (via COM automation) to generate electrical Interconnection Diagram (IDP) drawings, plus the matching AutoCAD Electrical project file (`.wdp`).
 - **IODB Generation** — I/O list and I/O database generation.
 - **SAC Generation** — SAC-related document generation.
 - **Shared services** — DocForge (Word document generation), Submittal Log, and TimeSheets integration, shared across the above tools.

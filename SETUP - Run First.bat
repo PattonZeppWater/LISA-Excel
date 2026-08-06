@@ -14,7 +14,7 @@ echo ============================================================
 echo.
 
 REM --- 1. look for an already-installed Python 3.10-3.12 -------
-echo [1/4] Looking for Python 3.10-3.12 ...
+echo [1/5] Looking for Python 3.10-3.12 ...
 set "PYEXE="
 for %%V in (3.12 3.11 3.10) do (
   if not defined PYEXE (
@@ -69,7 +69,7 @@ echo       Using: !PYEXE!
 echo.
 
 REM --- 3. create the virtual environment ----------------------
-echo [2/4] Creating the virtual environment ...
+echo [2/5] Creating the virtual environment ...
 REM Remove any existing .venv first -- if one was copied in from another PC it is
 REM dead (its config points at the original machine), so always build fresh here.
 if exist ".venv" rmdir /s /q ".venv"
@@ -86,7 +86,7 @@ if not exist ".venv\Scripts\python.exe" (
 )
 
 REM --- 4. install dependencies --------------------------------
-echo [3/4] Installing dependencies ^(a few minutes^) ...
+echo [3/5] Installing dependencies ^(a few minutes^) ...
 ".venv\Scripts\python.exe" -m pip install --upgrade pip
 ".venv\Scripts\python.exe" -m pip install -r requirements.txt
 ".venv\Scripts\python.exe" ".venv\Scripts\pywin32_postinstall.py" -install >nul 2>&1
@@ -100,7 +100,26 @@ if not errorlevel 1 (
   echo       Git auto-sync hook enabled ^(pull rebuilds venv/frontend as needed^).
 )
 
-echo [4/4] Done.
+REM --- 5. build the React UI (Frontend\frontend\dist) ---------
+REM dist/ and node_modules/ are gitignored, so a fresh clone has NO built interface and
+REM LISA would serve a blank / HTTP 404 window. ensure-frontend.ps1 builds it, downloading
+REM a portable Node 20 automatically if this PC has none. This is THE step that makes a
+REM plain "git clone" launchable. ^(A packaged bundle ships dist and the script no-ops.^)
+echo [4/5] Building the LISA interface ^(first time downloads Node; a few minutes^) ...
+if exist "Build\ensure-frontend.ps1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "Build\ensure-frontend.ps1"
+  if errorlevel 1 (
+    echo.
+    echo   WARNING: the LISA interface did not build, so LISA may show a blank/404 window.
+    echo   Fix your internet/proxy or install Node 20 from https://nodejs.org , then re-run
+    echo   this setup ^(or just run:  Build\ensure-frontend.ps1^).
+    echo.
+  )
+) else (
+  echo       ^(no Build\ensure-frontend.ps1 - packaged bundle already includes the interface^)
+)
+
+echo [5/5] Done.
 echo.
 echo ============================================================
 echo    Setup complete!  Now double-click  "LAUNCH LISA.bat"

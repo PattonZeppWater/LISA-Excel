@@ -28,7 +28,7 @@ def test_power_drawing_points_to_tsp_counterpart():
             _row("P200", "D", "Inst_4W_R (Field_4Term)", "TSP",   "AIT", "003", "003", "AE")]
     loop = _inst_loop("Inst_4W_R", "POWER")
     nr.annotate_instrument_refs([loop], fill, _CI, "73.1111", "s", "P100")
-    assert loop.get("ref_dwg") == "73.1111-02s"   # counterpart P200 = index 1 -> seq 2
+    assert loop.get("ref_dwg") == "73.1111-D.02"   # counterpart P200 = index 1 -> seq 2 -> D.02
 
 
 def test_tsp_drawing_points_to_power_counterpart():
@@ -36,7 +36,7 @@ def test_tsp_drawing_points_to_power_counterpart():
             _row("P200", "D", "Inst_4W_R", "TSP",   "AIT", "003", "003", "AE")]
     loop = _inst_loop("Inst_4W_R", "TSP")
     nr.annotate_instrument_refs([loop], fill, _CI, "73.1111", "s", "P200")
-    assert loop.get("ref_dwg") == "73.1111-01s"   # counterpart P100 = index 0 -> seq 1
+    assert loop.get("ref_dwg") == "73.1111-D.01"   # counterpart P100 = index 0 -> seq 1 -> D.01
 
 
 def test_counterpart_number_uses_seq_start_when_present():
@@ -48,9 +48,9 @@ def test_counterpart_number_uses_seq_start_when_present():
             _row("P200", "D", "Inst_4W_R (Field_4Term)", "TSP",   "AIT", "003", "003", "AE")]
     loop = _inst_loop("Inst_4W_R", "POWER")
     nr.annotate_instrument_refs([loop], fill, ci, "73.1111", "s", "P100")
-    assert loop.get("ref_dwg") == "73.1111-03s"   # counterpart P200 Seq_Start=3, not position 2
+    assert loop.get("ref_dwg") == "73.1111-D.03"   # counterpart P200 Seq_Start=3 -> D.03, not position 2
     # falls back to 1-based position when Seq_Start is absent (older backend)
-    assert nr.counterpart_dwg_number(_CI, "P200", "73.1111", "s") == "73.1111-02s"
+    assert nr.counterpart_dwg_number(_CI, "P200", "73.1111", "s") == "73.1111-D.02"
 
 
 def test_non_4w_instrument_gets_no_ref():
@@ -86,11 +86,11 @@ def test_signal_side_non4w_symbol_still_gets_ref():
     lp = {"dst_block": "Inst_4W_R", "Wire_Type": "POWER",
           "ISATag_ElementIdent": "AIT", "ISATag_LoopNum": "001", "ISATag_ElementNum": "001", "ISATag_FunctIdent": "AE"}
     nr.annotate_instrument_refs([lp], fill, ci, "73.1415", "e", "P01")
-    assert lp.get("ref_dwg") == "73.1415-02e"
+    assert lp.get("ref_dwg") == "73.1415-D.02"
     ls = {"dst_block": "Inst_Sensor_2W_R", "Wire_Type": "TSP",
           "ISATag_ElementIdent": "AIT", "ISATag_LoopNum": "001", "ISATag_ElementNum": "001", "ISATag_FunctIdent": "AE"}
     nr.annotate_instrument_refs([ls], fill, ci, "73.1415", "e", "S01")
-    assert ls.get("ref_dwg") == "73.1415-01e"   # signal side points back at the power drawing
+    assert ls.get("ref_dwg") == "73.1415-D.01"   # signal side points back at the power drawing
 
 
 def test_build_note_items_shapes():

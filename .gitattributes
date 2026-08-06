@@ -1,3 +1,11 @@
 # Git hooks must have LF line endings to run under Git Bash / sh, even on Windows
 # checkouts where autocrlf would otherwise convert them to CRLF (which breaks them).
 .githooks/** text eol=lf
+
+# Windows launcher / setup / helper scripts must have CRLF line endings so cmd.exe and
+# PowerShell run them reliably on every machine -- regardless of each user's core.autocrlf
+# setting. An LF-only .bat can mis-parse labels/blocks under cmd.exe. (Pinned here so a plain
+# `git clone` always lands correct line endings without anyone configuring autocrlf.)
+*.bat  text eol=crlf
+*.cmd  text eol=crlf
+*.ps1  text eol=crlf

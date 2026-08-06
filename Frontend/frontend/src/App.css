@@ -512,7 +512,31 @@ body {
 .idp-toolbtn:disabled { cursor: default; opacity: .55; }
 
 .idp-fillpill { display: inline-flex; align-items: center; gap: 4px; font-size: 0.76rem; font-weight: 600;
-  padding: 2px 8px; border-radius: 20px; font-family: monospace; white-space: nowrap; }
+  padding: 2px 8px; border-radius: 20px; font-family: monospace; white-space: nowrap;
+  max-width: 176px; overflow: hidden; box-sizing: border-box; }
 .idp-fillpill.ok   { color: var(--status-success-soft); background: color-mix(in srgb, var(--status-success-soft) 18%, transparent); }
 .idp-fillpill.warn { color: var(--status-warning);      background: color-mix(in srgb, var(--status-warning) 20%, transparent); }
 .idp-fillpill.over { color: var(--status-red-bright);   background: color-mix(in srgb, var(--status-red-bright) 18%, transparent); }
+/* Fixed-footprint pill: pin the icon, and clip the message to the pill's own rounded bounds with
+   an ellipsis so long text never spills outside. HOVER reveals it: only when the text overflows,
+   the message scrolls (billboard style) to show the whole thing, then returns. Short pills that
+   fit never move. Reduced-motion users keep the static ellipsis + the title tooltip, no motion. */
+.idp-fillpill-icon { flex: 0 0 auto; }
+.idp-fillpill-viewport { flex: 1 1 auto; min-width: 0; overflow: hidden; }
+.idp-fillpill-track { display: inline-block; white-space: nowrap; vertical-align: bottom;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+/* On hover, an overflowing message unclips and scrolls to reveal itself (the viewport clips it). */
+.idp-fillpill:hover .idp-fillpill-track.overflowing {
+  max-width: none; overflow: visible; text-overflow: clip; will-change: transform;
+  animation: idp-marquee var(--marquee-dur, 8s) ease-in-out infinite;
+}
+@keyframes idp-marquee {
+  0%, 12%  { transform: translateX(0); }               /* start -- the beginning is shown */
+  50%, 62% { transform: translateX(var(--marquee-shift, 0)); }  /* end -- the rest is revealed */
+  100%     { transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .idp-fillpill:hover .idp-fillpill-track.overflowing {
+    animation: none; max-width: 100%; overflow: hidden; text-overflow: ellipsis;
+  }
+}
