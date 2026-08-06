@@ -21,6 +21,7 @@ Sheets written:
 
 import os
 import re
+import sys
 import shutil
 import warnings
 
@@ -197,8 +198,113 @@ def degrey(in_path, out_path=None):
     return n
 
 
+def _com_finalize(path, flag_log=None):
+    """Open the written workbook in Excel and let the workbook's OWN macros
+    rebuild the per-row data-validation dropdowns and the grey-out, then re-save
+    through Excel. Returns True on success, False if it was skipped/failed.
+
+    WHY THIS EXISTS: openpyxl (the value writer above) cannot round-trip this
+    .xlsm without loss. It emits "Data Validation extension is not supported and
+    will be removed" and drops every x14 (extension-list) dropdown — the modern
+    dropdowns on ConduitIndex/FillIndex whose source is a named range on another
+    sheet. And because it writes OUTSIDE Excel, the workbook's Worksheet_Change
+    macros never fire, so the rows it writes are never greyed and their dropdowns
+    are never built. The result is exactly the reported bug: a "broken" workbook
+    missing its greying and some of its dropdowns.
+
+    Excel + the workbook's own routines regenerate both from the values already
+    written: FillIndex.PZ_ForceRebuild (grey-out + per-row S Symbol / Color / Tag
+    validation) and ConduitIndex.CI_EnsureValidations (Type / Ref Doc / Deviations
+    dropdowns). Saving through Excel keeps the VBA project, conditional formatting,
+    and all validations native — nothing is "not supported".
+
+    Graceful no-op when pywin32 / Excel is unavailable (e.g. a headless CI box):
+    the openpyxl file is left as-is (lossy but present) instead of erroring, and a
+    one-line reason is written to stderr so the loss is never silent.
+    """
+    try:
+        import pythoncom
+        import win32com.client
+    except ImportError:
+        print("idp_write: pywin32/Excel unavailable — skipped the Excel finalize; "
+              "the output's dropdowns and grey-out will be missing.", file=sys.stderr)
+        return False
+
+    pythoncom.CoInitialize()
+    excel = None
+    try:
+        excel = win32com.client.DispatchEx("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        # Enable macros on open WITHOUT a prompt. The default (msoAutomationSecurityByUI)
+        # honors the Trust Center's "disable macros" UI setting, so Application.Run below
+        # fails with "all macros may be disabled". msoAutomationSecurityLow (=1) enables
+        # them for this automation session only (does not change the user's settings).
+        try:
+            excel.AutomationSecurity = 1
+        except Exception:
+            pass
+        excel.EnableEvents = False          # don't fire Workbook_Open / per-cell Change
+        wb = excel.Workbooks.Open(os.path.abspath(path), UpdateLinks=0)
+        try:
+            # Rebuild dropdowns + grey-out from the values just written. Address the
+            # sheet-module routines by each sheet's LIVE VBA CodeName (robust to any
+            # sheet-name / code-name drift), and isolate each so one failing still
+            # lets the other run. If Run can't resolve the sheet-module proc, fall
+            # back to "nudging" a structural cell with events ON so Worksheet_Change
+            # fires the same rebuild.
+            for sheet_name, proc, nudge_col in (("FillIndex", "PZ_ForceRebuild", FI_TYPE),
+                                                ("ConduitIndex", "CI_EnsureValidations", CI_TYPE)):
+                ws = wb.Worksheets(sheet_name)
+                try:
+                    excel.Run(ws.CodeName + "." + proc)
+                except Exception as e:               # noqa: BLE001 — best-effort per sheet
+                    print(f"idp_write: '{proc}' on {sheet_name} did not run directly "
+                          f"({e}); trying a Worksheet_Change nudge.", file=sys.stderr)
+                    try:
+                        excel.EnableEvents = True
+                        data_row = 3 if sheet_name == "FillIndex" else 2
+                        cell = ws.Cells(data_row, nudge_col)
+                        cell.Value = cell.Value      # re-write triggers Worksheet_Change
+                    except Exception as e2:          # noqa: BLE001
+                        print(f"idp_write: nudge rebuild on {sheet_name} also failed "
+                              f"({e2}).", file=sys.stderr)
+                    finally:
+                        excel.EnableEvents = False
+            # Re-assert the amber review highlights. The grey-out rebuild repaints
+            # cell interiors and can clear the FFF2CC flag fill; the review COMMENTS
+            # were written by openpyxl and the macros don't touch them, so only the
+            # fill needs restoring. Excel Interior.Color is a BGR OLE color.
+            if flag_log:
+                amber = 255 + 242 * 256 + 204 * 65536   # openpyxl FFF2CC -> BGR
+                for title, row, col in flag_log:
+                    try:
+                        wb.Worksheets(title).Cells(row, col).Interior.Color = amber
+                    except Exception:
+                        pass
+            wb.Save()
+        finally:
+            wb.Close(SaveChanges=False)             # already saved above
+        return True
+    except Exception as e:                          # noqa: BLE001 — never fail the write
+        print(f"idp_write: Excel finalize failed ({e}). The file was still written "
+              f"by openpyxl, but its dropdowns and grey-out are missing.", file=sys.stderr)
+        return False
+    finally:
+        if excel is not None:
+            try:
+                excel.Quit()
+            except Exception:
+                pass
+        try:
+            pythoncom.CoUninitialize()
+        except Exception:
+            pass
+
+
 def write_workbook(records, template_path, out_path, clear_rows=True, add_flags=True,
-                   lisa_gate=True, anatomy=True, schedule_doc=None, clear_deviations=False):
+                   lisa_gate=True, anatomy=True, schedule_doc=None, clear_deviations=False,
+                   finalize=True):
     _schedule_doc = schedule_doc
     check_template_sane(template_path)   # never build on top of a prior output
     # LISA-readiness gate: remap raw conductor counts to legal connection counts
@@ -294,8 +400,18 @@ def write_workbook(records, template_path, out_path, clear_rows=True, add_flags=
     rd = wb["Ref Documents & Deviations"]
     fi = wb["FillIndex"]
 
-    # honor the add_flags option: no-op the flagger when disabled
-    flag = _flag_cell if add_flags else (lambda *a, **k: None)
+    # honor the add_flags option: no-op the flagger when disabled. When enabled,
+    # also record (sheet, row, col) of every flagged cell so _com_finalize can
+    # re-assert the amber highlight after the macro grey-out rebuild (which would
+    # otherwise repaint over it). Only ConduitIndex/FillIndex ever get flagged.
+    flag_log = []
+    if add_flags:
+        def flag(ws, row, col, msg):
+            _flag_cell(ws, row, col, msg)
+            flag_log.append((ws.title, row, col))
+    else:
+        def flag(*a, **k):
+            return None
 
     # Capture the per-row Wire Label TEXTJOIN formulas from the first data row so
     # we can re-apply them (row-translated) to each row we write — computed labels
@@ -601,4 +717,12 @@ def write_workbook(records, template_path, out_path, clear_rows=True, add_flags=
             pass
 
     wb.save(out_path)
+
+    # openpyxl just stripped the x14 dropdowns and wrote every value outside of
+    # Excel, so the grey-out and per-row dropdowns are absent. Hand the file to
+    # Excel so the workbook's own macros rebuild both from the values written.
+    # Best-effort: a failure here leaves the (lossy) openpyxl file rather than
+    # erroring the whole extraction.
+    if finalize:
+        _com_finalize(out_path, flag_log)
     return out_path
