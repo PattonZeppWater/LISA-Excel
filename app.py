@@ -50,6 +50,17 @@ app.register_blueprint(forge_bp,      url_prefix="/api/docforge")
 app.register_blueprint(submittal_bp,  url_prefix="/api/submittal-log")
 app.register_blueprint(timesheets_bp, url_prefix="/api/timesheets")
 
+# ── Autofill (IDP Extractor) — merged as a self-contained Flask blueprint ───────
+# The extractor package lives in Autofill/ next to this file; register() mounts its whole
+# UI + API under /autofill (page at /autofill/, assets at /autofill/static, API at
+# /autofill/api/*). Isolated under one prefix — no clash with LISA's routes.
+sys.path.insert(0, os.path.join(BASE, "Autofill"))
+try:
+    import idp_web_panel as _autofill
+    _autofill.register(app, prefix="/autofill")
+except Exception as _e:
+    print(f"[LISA] Autofill module not mounted: {_e}")
+
 # ── Health ─────────────────────────────────────────────────────────────────────
 @app.route("/api/health")
 def health():
@@ -78,12 +89,33 @@ def serve_spa(path):
 
 # ── Launch ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    import threading, time, webview
+    import threading, time, webview, socket
+
+    def _pick_port():
+        """Prefer 5000, but fall back to another free Chromium-safe port if it's taken. A
+        hardcoded 5000 that's already in use makes app.run fail on the bg thread and opens a
+        BLANK window with no error."""
+        for p in (5000, 5001, 5002, 5003, 8000, 8080, 8137, 5057, 5090):
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            ok = False
+            try:
+                s.bind(("127.0.0.1", p)); ok = True
+            except OSError:
+                pass
+            finally:
+                s.close()
+            if ok:
+                return p
+        return 5000
+
+    PORT = _pick_port()
 
     def _run_flask():
         """Run Flask on a background thread. CoInitialize here for COM/AutoCAD."""
         pythoncom.CoInitialize()
-        app.run(port=5000, debug=False, threaded=False, use_reloader=False)
+        # threaded: a single slow request (e.g. an Autofill source-tree walk) must never
+        # freeze the whole UI. Without this, one blocking call blanks the window.
+        app.run(port=PORT, debug=False, threaded=True, use_reloader=False)
 
     flask_thread = threading.Thread(target=_run_flask, daemon=True)
     flask_thread.start()
@@ -95,14 +127,14 @@ if __name__ == "__main__":
     import urllib.request
     for _ in range(80):  # up to ~20s
         try:
-            urllib.request.urlopen("http://localhost:5000/", timeout=1)
+            urllib.request.urlopen(f"http://localhost:{PORT}/", timeout=1)
             break
         except Exception:
             time.sleep(0.25)
 
     window = webview.create_window(
         title="LISA — Advanced Integration & Controls",
-        url="http://localhost:5000",
+        url=f"http://localhost:{PORT}",
         width=1400,
         height=900,
         min_size=(900, 600),

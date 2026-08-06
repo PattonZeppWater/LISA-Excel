@@ -1,0 +1,21 @@
+# ============================================================================
+#  LISA Autofill  -  VERSION-UPDATE SOURCE   (ships inside the folder)
+# ============================================================================
+# The FIRST non-comment line below is the shared "Version Control" folder that
+# THIS app -- and every COPY of it -- pulls updates from with the Update button,
+# and that Training publishes new versions into. Because this file travels INSIDE
+# the folder, a copy on any PC automatically points back to the SERVER with no
+# per-user setup: the user copies the folder, clicks Update, and gets the latest.
+#
+# HOW TO SET IT (one time):
+#   Put the real SERVER path on its own line below with NO leading '#'. Use the
+#   full UNC path (\\server\share\...), NOT a mapped drive letter (Z:\...), so it
+#   resolves the same on every user's machine.
+#
+#   Example:
+#     \\FILESERVER\Engineering\LISA\Version Control
+#
+# Until a real (uncommented) path is present below, the app falls back to a local
+# "Version Control" folder next to the app -- so nothing breaks before you set it.
+#
+# >>> put your server Version Control UNC path on the next line (no leading #):

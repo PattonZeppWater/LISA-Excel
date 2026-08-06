@@ -1,0 +1,83 @@
+{
+  "_comment": "Logic derived from FINISHED IDP drawings (Stratford 73.1163 + ExampleIDP 73.1142). Companion to finished-idp-anatomy.md. Encodes the drawing conventions the extractor should apply/validate so the workbook renders into correct IDP sheets.",
+
+  "fill_type_display": {
+    "POWER": "PWR",
+    "CONTROL": "CTRL",
+    "TSP": "TSP",
+    "MFG_CABLE": "MFG",
+    "CAT-6": "CAT6",
+    "FIBER": "FIBER",
+    "PULL_ROPE": "PULLROPE",
+    "_ground": "GND"
+  },
+
+  "phase_terms": {"A": "%%CA", "B": "%%CB", "C": "%%CC"},
+  "phase_terms_display": {"A": "ØA", "B": "ØB", "C": "ØC"},
+
+  "color_conventions": {
+    "power_3ph_480v": {"A": "BROWN", "B": "ORANGE", "C": "YELLOW", "ground": "GREEN"},
+    "power_3ph_208v": {"A": "BLACK", "B": "RED", "C": "BLUE", "ground": "GREEN"},
+    "control_discrete": {"signal": "PER-PROJECT (learned; BLU or RED vary by project, do not hard-default)", "ground": "GREEN"},
+    "instrument_power": {"power": "BLUE", "neutral": "BLACK"},
+    "analog_tsp_pair": {"plus": "RED", "minus": "BLACK", "written": "RED/BLK"}
+  },
+
+  "gauge_defaults": {
+    "control": "#14",
+    "signal_tsp": "#18",
+    "instrument_power": "#14",
+    "ground_control": "#14",
+    "ground_power": "#6"
+  },
+
+  "term_vocabulary": ["COM", "NO", "NC", "+", "-", "PWR", "GND", "12N", "SHLD",
+                      "T1", "T2", "T3", "%%CA", "%%CB", "%%CC"],
+
+  "device_symbol_hints": {
+    "pressure switch": "PSH",
+    "level transmitter": "LE/LIT",
+    "motor": "MTR (bubble w/ HP + FLA)",
+    "terminal block": "TB",
+    "circuit breaker": "CB",
+    "ground": "GND"
+  },
+
+  "archetypes": {
+    "power_3phase": {
+      "type": "POWER", "connections": 3, "phase_terms": ["%%CA", "%%CB", "%%CC"],
+      "colors": ["BROWN", "ORANGE", "YELLOW"], "separate_ground": true,
+      "note": "parallel/multi-conductor feeder renders as 3 phase landings, not raw conductor count"
+    },
+    "discrete_control": {
+      "type": "CONTROL", "terms": ["COM", "NO", "NC"], "color": "RED", "gauge": "#14"
+    },
+    "analog_instrument": {
+      "parts": [
+        {"type": "POWER", "pair": ["BLUE", "BLACK"], "gauge": "#14", "terms": ["PWR", "GND"]},
+        {"type": "TSP", "connections": 1, "color": "RED/BLK", "gauge": "#18", "terms": ["+", "-"], "shield": "SHLD"}
+      ]
+    }
+  },
+
+  "sheet_composition": {
+    "set": ["G1 cover", "G2 index", "G3 symbols legend", "one <proj>-NNE sheet per conduit"],
+    "sheet_zones": ["SOURCE (left)", "FIELD (center = conduit + FILL TYPE table)", "DESTINATION (right)"],
+    "top_tables": ["DEVIATIONS & NOTES", "SUPPORTING DOCUMENTS x2 (DrawingNo/Description/Manufacturer)", "CHANGE ORDERS & ERRORS"],
+    "one_fill_type_row_per": "(type, wire_gauge, color) aggregated with QUANTITY"
+  },
+
+  "type_normalization": {
+    "_comment": "Real workbooks contain off-dropdown Type values; normalize to the legal domain (decision: normalize everything to dropdown).",
+    "fold_ground_into_group": "GROUND/GND rows are folded into the conduit's primary group (add GRN color); no standalone GROUND type row is emitted.",
+    "aliases": {"ETHERNET": "CAT-6", "PULL ROPE": "PULL_ROPE", "PULLROPE": "PULL_ROPE", "MFR CABLE": "MFG_CABLE"}
+  },
+
+  "validation_rules": [
+    "Every conduit that should get a sheet must have >=1 FillIndex row.",
+    "POWER 3-phase should have 3 phase connections + a separate ground; phase colors per color_conventions.",
+    "Analog instrument = TSP pair (Wire Ct 1) + a power pair; shield noted separately.",
+    "Discrete control uses per-contact terms (COM/NO/NC).",
+    "S/D symbols must be legal dropdown blocks (enforced by lisa_contract)."
+  ]
+}

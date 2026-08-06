@@ -12,6 +12,7 @@ const tree = [
     category: 'IDP',
     services: [
       { label: 'Generation', path: '/idp/generation', ready: true },
+      { label: 'Autofill',   path: '/idp/autofill',   ready: true },
     ],
   },
   {

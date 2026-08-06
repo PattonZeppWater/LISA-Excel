@@ -6,6 +6,7 @@ import ToolsDocForge        from './pages/ToolsDocForge'
 import ToolsSubmittalLog    from './pages/ToolsSubmittalLog'
 import IodbGeneration       from './pages/IodbGeneration'
 import IdpGeneration        from './pages/IdpGeneration'
+import PersistentAutofill   from './pages/IdpAutofill'
 import SharedTimesheets     from './pages/SharedTimesheets'
 
 export default function App() {
@@ -36,8 +37,11 @@ export default function App() {
             <Route path="/tools/submittal-log"      element={<ToolsSubmittalLog />} />
             <Route path="/iodb/generation"          element={<IodbGeneration />} />
             <Route path="/idp/generation"           element={<IdpGeneration />} />
+            <Route path="/idp/autofill"             element={<></>} />
             <Route path="/shared/timesheets"        element={<SharedTimesheets />} />
           </Routes>
+          {/* Mounted once, kept alive across tab switches; shows only on /idp/autofill. */}
+          <PersistentAutofill />
         </main>
       </div>
     </BrowserRouter>

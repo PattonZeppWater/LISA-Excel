@@ -1,0 +1,215 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LISA · Autofill</title>
+<link rel="stylesheet" href="static/lisa.css">
+<link rel="stylesheet" href="static/panel.css">
+</head>
+<body>
+<div class="app">
+  <!-- Embedded inside LISA (IDP → Autofill); LISA provides the outer nav, so no internal sidebar. -->
+
+  <!-- ── main content — all IDP-Extraction functionality, sub-tabbed ──── -->
+  <main class="main-content">
+    <div class="subnav">
+      <button class="pill active" data-page="scan" title="Scan a project folder and fill the IDP workbook">Scan &amp; Fill</button>
+      <button class="pill" data-page="schedule" title="The conduit index mapping produced by the last scan">Conduit Index Mapping</button>
+      <button class="pill" data-page="logic" title="Rules the tool applies on every scan — view, add, or delete them">Remembered Logic</button>
+      <button class="pill" data-page="sources" title="Per-cell provenance: which source file each value came from">Sources</button>
+      <button class="pill" data-page="training" title="Teach the tool from finished IDPs (password-protected)">Training</button>
+      <span class="subnav-opts">
+        <label class="mini-check" title="Run a slower, high-accuracy 2nd OCR pass on low-confidence cells"><input type="checkbox" id="opt_hi_ocr" checked title="Run a slower, high-accuracy 2nd OCR pass on low-confidence cells"> High-accuracy OCR</label>
+        <label class="mini-check" title="Write the deviation-notes column blank (clean sheets)"><input type="checkbox" id="opt_clear_dev" title="Write the deviation-notes column blank (clean sheets)"> Clear deviation notes</label>
+        <label class="mini-check" title="Render hard sheets and write Claude question-packets for tough cells (offline scan stays offline)"><input type="checkbox" id="opt_vision" title="Render hard sheets and write Claude question-packets for tough cells (offline scan stays offline)"> Vision-assist hard cells</label>
+        <label class="mini-check" title="Also try a fully-offline grid reader for a conduit schedule embedded in a busy plan sheet (rotated / stacked-header / numeric-ID drawn tables). Results are flagged for verification and only used if better than the normal read."><input type="checkbox" id="opt_specialized" title="Also try a fully-offline grid reader for a conduit schedule embedded in a busy plan sheet (rotated / stacked-header / numeric-ID drawn tables). Results are flagged for verification and only used if better than the normal read."> Specialized reader</label>
+      </span>
+    </div>
+
+    <!-- SCAN PAGE -->
+    <section class="page active" id="page-scan">
+      <div class="home">
+        <div class="home-hero">
+          <div class="hero-dot-grid"></div>
+          <div class="hero-content">
+            <div class="hero-label">Electrical IDP Automation</div>
+            <div class="hero-title"><span class="hero-title-grad">Autofill</span></div>
+            <div class="hero-tagline">Extract conduits, fill &amp; terminations into the IDP workbook LISA reads.</div>
+            <div class="update-bar">
+              <input class="txt update-path" id="update_path" placeholder="server Version Control folder (\\server\share\… — shared to every copy)" title="The SHARED server Version Control folder every copy pulls updates from. Set it here ONCE — it's saved inside the app (version_source.txt) and travels to every copied machine automatically. Use a full UNC path (\\server\share\…), not a mapped drive letter, so it resolves on all PCs.">
+              <button class="update-btn" id="btn_update" onclick="runUpdate()" disabled title="Pull the latest published version from the shared server folder (enabled only when out of date)">Update</button>
+              <span class="update-txt neutral" id="update_status" title="Version status vs the shared folder">—</span>
+            </div>
+          </div>
+          <div class="hero-art">
+            <div class="pillars">
+              <div class="pillar" style="--accent:#4a9fd4"><span class="pillar-glow"></span><span class="pillar-icon">🔌</span><div><div class="pillar-title">Conduits</div><div class="pillar-desc">Schedule + cable-schedule OCR</div></div></div>
+              <div class="pillar" style="--accent:#00e6b3"><span class="pillar-glow"></span><span class="pillar-icon">🧵</span><div><div class="pillar-title">Fill</div><div class="pillar-desc">Types, grounds, colors</div></div></div>
+              <div class="pillar" style="--accent:#e6a817"><span class="pillar-glow"></span><span class="pillar-icon">🔗</span><div><div class="pillar-title">Terminals</div><div class="pillar-desc">EDC landings, panel circuits</div></div></div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-label">1 · Source files to scan (PDF or Excel)</div>
+          <div class="drop-zone" id="dropzone" title="Click to pick the project folder — plans, EDC/RTP drawings, and cut sheets are found automatically">
+            <div class="drop-zone-icon">📁</div>
+            <div class="drop-zone-primary">Choose the project folder</div>
+            <div class="drop-zone-hint">click to pick a folder — plans, EDC submittals &amp; cut sheets are found automatically</div>
+          </div>
+          <div class="recent-row" id="recent_projects" style="display:none"></div>
+          <ul class="file-list" id="file_list"></ul>
+          <div class="row">
+            <button class="btn-primary" onclick="pickFolder()" title="Pick a whole project folder — plans, EDC/RTP drawings, cut sheets are found automatically">Add folder…</button>
+            <button class="btn-primary ghost" onclick="pickFiles()" title="Pick individual PDF/Excel source files instead of a folder">Add files…</button>
+            <button class="btn-primary ghost" onclick="clearFiles()" title="Clear the source file list">Clear</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-label">2 · Template workbook (.xlsm)</div>
+          <div class="row"><input class="txt" id="template" placeholder="template .xlsm" title="The IDP template workbook the scan fills (defaults to the shipped template)"><button class="btn-primary" onclick="pickTemplate()" title="Choose the IDP template workbook to fill (remembered for next time)">Browse…</button></div>
+          <div class="card-label" style="margin-top:14px">3 · Save filled workbook as</div>
+          <div class="row"><input class="txt" id="output" placeholder="output folder / file" title="Folder the filled workbook is saved into (a per-project subfolder is created)"><button class="btn-primary" onclick="pickOutput()" title="Choose the folder the filled workbook is saved into">Save folder…</button></div>
+          <div class="card-label" style="margin-top:14px">4 · Symbol block library</div>
+          <div class="row"><input class="txt" id="block_lib" placeholder="block library folder (auto-located)" readonly title="Folder of symbol block .dwgs the exe infers symbols from (auto-located)"><button class="btn-primary" onclick="pickBlockLibrary()" title="Choose the symbol block-library folder (auto-located by default)">Browse…</button></div>
+          <div class="key-hint" id="block_lib_status">The exe infers symbols from these block .dwgs — no AutoCAD scan.</div>
+        </div>
+
+        <div class="card">
+          <div class="card-label">5 · Scanning options</div>
+          <div class="opt-row"><span class="opt-lbl">Extraction mode</span>
+            <label class="rad" title="Auto-detect the best source (recommended)"><input type="radio" name="mode" value="auto" checked title="Auto-detect the best source (recommended)"> Auto</label>
+            <label class="rad" title="Force reading from the finished IDP drawings"><input type="radio" name="mode" value="drawings" title="Force reading from the finished IDP drawings"> IDP drawings</label>
+            <label class="rad" title="Force reading the conduit schedule"><input type="radio" name="mode" value="schedule" title="Force reading the conduit schedule"> Conduit schedule</label>
+            <label class="rad" title="Force reading the cable schedule"><input type="radio" name="mode" value="cables" title="Force reading the cable schedule"> Cable schedule</label>
+          </div>
+          <div class="opt-row">
+            <label class="chk" title="Infer source/destination symbols from the block library (no AutoCAD scan)"><input type="checkbox" id="infer" checked title="Infer source/destination symbols from the block library (no AutoCAD scan)"> Infer S/D symbols</label>
+            <label class="chk" title="Amber-flag cells that need a human check"><input type="checkbox" id="flags" checked title="Amber-flag cells that need a human check"> Flag uncertain cells</label>
+            <label class="chk" title="Clear the template's existing fill rows before writing"><input type="checkbox" id="clearrows" checked title="Clear the template's existing fill rows before writing"> Clear existing rows first</label>
+            <label class="chk" title="Also save a copy with the grey placeholder shading removed"><input type="checkbox" id="nogrey" checked title="Also save a copy with the grey placeholder shading removed"> Save de-greyed copy</label>
+            <label class="chk" title="Add newly-seen device→symbol candidates to Remembered Logic"><input type="checkbox" id="learn" checked title="Add newly-seen device→symbol candidates to Remembered Logic"> Learn: flag new logic</label>
+          </div>
+          <div class="opt-row"><span class="opt-lbl">Default Conduit Type for unknowns</span>
+            <input class="sel" id="unknown" list="unknown_opts" value="XXX" autocomplete="off" title="Conduit type to use when the source doesn't state one — pick a suggestion or type your own (e.g. PVC-GRS, EMT, IMC).">
+            <datalist id="unknown_opts"><option>XXX</option><option>PVC</option><option>RGS</option><option>RMC</option><option>PVC-GRS</option><option>EMT</option><option>IMC</option><option>LFMC</option><option>FMC</option></datalist>
+          </div>
+        </div>
+
+        <div class="run-row">
+          <button class="run-btn" id="run_btn" onclick="runScan()" title="Extract conduits + fill and write the IDP workbook">▶  Run scan</button>
+          <button class="cancel-btn" id="cancel_btn" onclick="cancelScan()" style="display:none" title="Stop the running scan (no half-written workbook)">■  Cancel</button>
+          <div class="loading-indicator" id="spin" style="display:none"><span class="spinner"></span><span>Scanning…</span></div>
+        </div>
+
+        <div class="card">
+          <div class="card-label">Log</div>
+          <pre class="log" id="log"></pre>
+        </div>
+      </div>
+    </section>
+
+    <!-- other pages -->
+    <section class="page" id="page-schedule"><div class="home"><h2 class="pg-title">Conduit Index Mapping</h2><p class="pg-sub">The conduit index from the last scan — each conduit mapped to its source, destination, size, type, and number of fill groups.</p>
+      <div class="card">
+        <div class="row">
+          <button class="btn-primary" onclick="cimapRefresh()" title="Reload the conduit index from the last scan">⟳ Refresh</button>
+          <button class="btn-primary ghost" onclick="cimapExport()" title="Download the conduit index as a CSV file">⭳ Export CSV</button>
+        </div>
+        <table class="tbl" id="cimap_tbl"><thead><tr><th>Conduit</th><th>Source</th><th>Dest</th><th>Size</th><th>Type</th><th>Fill</th></tr></thead><tbody></tbody></table>
+        <div class="key-hint" id="cimap_status">Run a scan, then click Refresh.</div>
+      </div></div></section>
+
+    <section class="page" id="page-logic"><div class="home"><h2 class="pg-title">Remembered Logic</h2><p class="pg-sub">Rules applied on every scan (device→symbol, header aliases, value fixes). A <span class="src-badge manual">manual</span> badge marks rules you added; the rest are training-generated.</p>
+      <div class="card">
+        <div class="row">
+          <button class="btn-primary" onclick="logicAddForm()" title="Add a new rule manually">＋ Add rule…</button>
+          <button class="btn-primary ghost" onclick="logicUndo()" title="Restore the rules from your last delete">↺ Undo delete</button>
+          <button class="btn-primary ghost" onclick="logicMultiDelete()" title="Delete every checked rule (asks for confirmation first)">🗑 Delete selected</button>
+          <button class="btn-primary ghost" onclick="logicExport()" title="Download the CURRENT rule set as a CSV (read live from disk — never stale)">⭳ Download rule set</button>
+          <button class="btn-primary ghost" onclick="logicReload()" title="Reload the rules from disk">⟳ Reload</button>
+          <span class="key-hint" id="logic_status" style="margin-left:auto"></span>
+        </div>
+        <div id="logic_form" class="logic-form" style="display:none">
+          <select class="sel" id="lf_type" title="Rule type">
+            <option value="symbol_keyword">symbol_keyword (device → symbol)</option>
+            <option value="text_fix">text_fix (fix an OCR misread, e.g. KLDS → MDS)</option>
+            <option value="value_rule">value_rule (normalize a value)</option>
+            <option value="header_alias">header_alias (column-header alias)</option>
+            <option value="note">note (reference only)</option>
+          </select>
+          <input class="txt" id="lf_match" placeholder="match (e.g. VFD, or KLDS)" title="The text to match — a device keyword, a value, or the WRONG text an OCR misread produced (e.g. KLDS)">
+          <input class="txt" id="lf_result" placeholder="result (e.g. VFD_L, or MDS)" title="What it maps to / the CORRECT text to replace it with (e.g. MDS)">
+          <input class="txt" id="lf_context" placeholder="context (optional)" title="Optional context (e.g. conduit_type)">
+          <input class="txt" id="lf_note" placeholder="note (optional)" title="Optional note">
+          <button class="btn-primary" onclick="logicAddSave()" title="Save this manual rule">Save</button>
+          <button class="btn-primary ghost" onclick="logicAddCancel()" title="Cancel">Cancel</button>
+        </div>
+        <table class="tbl" id="logic_tbl"><thead><tr>
+          <th title="Select/clear all rows for multi-delete"><input type="checkbox" id="logic_all" onchange="logicToggleAll(this)" title="Select or clear all rows for multi-delete"></th>
+          <th title="The kind of rule: symbol_keyword (device name → IDP block symbol), value_rule (normalize a value's spelling/format), header_alias (recognize a column-header spelling), note (reference only, no action). Hover a row to see what it does.">Type</th>
+          <th title="The text the rule looks for — a device keyword (e.g. VFD), a raw value, or a column-header spelling.">Match</th>
+          <th title="Delete this rule"></th>
+          <th title="What the rule produces when it matches — the IDP symbol, the normalized value, or the mapped column.">Result</th>
+          <th title="When the rule applies — e.g. conduit_type, or a source/destination side. Blank = always.">Context</th>
+          <th title="A human note on why this rule exists.">Note</th>
+          <th title="manual = you added it by hand; generated = learned automatically from training.">Rule source</th>
+        </tr></thead><tbody></tbody></table>
+      </div></div></section>
+
+    <section class="page" id="page-sources"><div class="home"><h2 class="pg-title">Sources</h2><p class="pg-sub">Per-cell provenance from the last run — which source file each value came from.</p><div class="card"><div class="row"><button class="btn-primary" onclick="srcRefresh()" title="Reload provenance from the last scan">⟳ Refresh</button><button class="btn-primary ghost" onclick="srcExport()" title="Download the provenance as a CSV file">⭳ Export CSV</button></div><table class="tbl" id="src_tbl"><thead><tr><th>Conduit</th><th>Field</th><th>Source file</th></tr></thead><tbody></tbody></table><div class="key-hint" id="src_status"></div></div></div></section>
+    <section class="page" id="page-training"><div class="home"><h2 class="pg-title">Training</h2><p class="pg-sub">Teach the tool by example: give it a project's plans, its finished IDPs, and the IDP we generated. It compares them, learns the safe gaps into Remembered Logic + the Claude skills, and archives a new version that other computers can update to.</p>
+
+      <!-- password gate — shown until the correct password unlocks the training body -->
+      <div class="card train-gate" id="train_gate">
+        <div class="card-label">🔒 Training is protected</div>
+        <div class="row"><input class="txt" id="train_pw" type="password" placeholder="Enter training password" title="Training password — unlocks the Training tab and version control" onkeydown="if(event.key==='Enter')unlockTraining()"><button class="btn-primary" onclick="unlockTraining()" title="Unlock the Training tab with the password">Unlock</button></div>
+        <div class="key-hint" id="train_pw_status">Enter the password to access training &amp; version control.</div>
+      </div>
+
+      <div id="train_body" style="display:none">
+      <div class="card">
+        <div class="card-label">Version control folder — publish new versions &amp; where computers pull updates</div>
+        <div class="row"><input class="txt" id="train_version_path" placeholder="shared folder (defaults to the Update bar's folder)" title="Training publishes a snapshot here; other computers pull it from the Update bar."><button class="btn-primary" onclick="pickVersionDir('train')" title="Choose the shared version-control folder">Browse…</button></div>
+        <div class="key-hint">Every “Compare &amp; Learn” archives the whole app as a new version here and bumps the shared “up to date” marker.</div>
+      </div>
+      <div class="card">
+        <div class="card-label">1 · Plans (source docs — PDF/Excel)</div>
+        <div class="row"><button class="btn-primary" onclick="trainAddFiles('plans')" title="Add the project's plan/source files (PDF/Excel)">Add files…</button><button class="btn-primary ghost" onclick="trainAddFolder('plans')" title="Add a whole folder of plan/source files">Add folder…</button><button class="btn-primary ghost" onclick="trainClear('plans')" title="Clear the plans list">Clear</button></div>
+        <ul class="file-list" id="train_plans_list"></ul>
+      </div>
+      <div class="card">
+        <div class="card-label">2 · Finished IDPs (approved drawings — DWG / folder) — ground truth</div>
+        <div class="row"><button class="btn-primary" onclick="trainAddFiles('finished')" title="Add the approved finished-IDP files (the ground truth)">Add files…</button><button class="btn-primary ghost" onclick="trainAddFolder('finished')" title="Add a whole folder of finished IDPs">Add folder…</button><button class="btn-primary ghost" onclick="trainClear('finished')" title="Clear the finished-IDPs list">Clear</button></div>
+        <ul class="file-list" id="train_finished_list"></ul>
+      </div>
+      <div class="card">
+        <div class="card-label">3 · Generated IDP (our workbook, or LISA's DWGs)</div>
+        <div class="row"><button class="btn-primary" onclick="trainAddFiles('generated')" title="Add our generated IDP (the workbook or LISA's DWGs) to compare">Add files…</button><button class="btn-primary ghost" onclick="trainAddFolder('generated')" title="Add a whole folder of our generated output">Add folder…</button><button class="btn-primary ghost" onclick="trainClear('generated')" title="Clear the generated-IDP list">Clear</button></div>
+        <ul class="file-list" id="train_generated_list"></ul>
+      </div>
+      <div class="card">
+        <div class="card-label">4 · Learn through Claude</div>
+        <div class="key-row">
+          <span class="opt-lbl">Anthropic API key</span>
+          <input class="txt" id="api_key" type="password" placeholder="sk-ant-…  (stored locally; lets the exe learn through Claude automatically)" title="Your Anthropic API key — stored locally so the exe can learn through Claude">
+          <button class="btn-primary" onclick="saveApiKey()" title="Save the API key locally">Save key</button>
+        </div>
+        <div class="key-hint" id="key_status">No API key set — “Ask Claude” will write a packet your attached Claude Code chat can resolve.</div>
+      </div>
+      <div class="run-row">
+        <button class="run-btn" id="train_btn" onclick="runTraining()" title="Compare finished IDPs vs our output, learn safe corrections, and snapshot a new version">▶  Compare &amp; Learn</button>
+        <button class="btn-primary" onclick="askClaude()" title="Write a questions-for-Claude packet (and answer it via the API key if one is set)">Ask Claude about uncertainties</button>
+        <button class="btn-primary ghost" onclick="downloadUncertainties()" title="Build the questions packet and choose where to save it (a Save-As dialog lets you pick the folder/filename; falls back to your browser Downloads if the dialog isn't available).">⭳ Download uncertainties…</button>
+      </div>
+      <div class="card"><div class="card-label">Training log</div><pre class="log" id="train_log"></pre></div>
+      </div><!-- /#train_body -->
+    </div></section>
+
+  </main>
+</div>
+<script src="static/app.js"></script>
+</body>
+</html>

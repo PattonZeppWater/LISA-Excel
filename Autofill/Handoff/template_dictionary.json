@@ -1,0 +1,96 @@
+{
+  "_comment": "AUTHORITATIVE, MACHINE-READABLE IDP template schema. This is GROUND TRUTH. The extractor loads this; the AI treats it as non-negotiable. If the template changes, re-dump the header rows and update this file + HANDOFF_IDP_Extractor_BuildGuide.md. Do NOT reconstruct these facts from memory.",
+  "template_file": "IDP_Workbook_CurrentWIP_3.xlsm",
+  "canonical_sample": "05_IDP_Workbook_CurrentWIP_3.xlsm",
+  "downstream_consumer": "LISA (reads by header text; Wire Labels are TEXTJOIN-computed inside the workbook)",
+
+  "sheets": {
+    "ConduitIndex": {
+      "header_row": 1,
+      "data_start_row": 2,
+      "write_columns_1_indexed": "A-K (1-11)",
+      "name_split_rule": "Name 1 = equipment TAG, Name 2 = DESCRIPTION, Name 3 = extra line",
+      "columns": [
+        {"col": "A", "idx": 1,  "header": "Conduit Name",        "key": "conduit_name",        "meaning": "Conduit identifier (e.g. CT7000). Required, unique.", "domain": null, "example": "CT7000"},
+        {"col": "B", "idx": 2,  "header": "Source  Name 1 ",      "key": "source_name_1",       "meaning": "Source TAG. NOTE double space + trailing space in header.", "domain": null, "example": "XFMR-100"},
+        {"col": "C", "idx": 3,  "header": "Source Name 2",        "key": "source_name_2",       "meaning": "Source description.", "domain": null, "example": "SMUD TRANSFORMER"},
+        {"col": "D", "idx": 4,  "header": "Source Name 3",        "key": "source_name_3",       "meaning": "Extra source line.", "domain": null, "example": ""},
+        {"col": "E", "idx": 5,  "header": "Destination Name 1",   "key": "destination_name_1",  "meaning": "Destination TAG.", "domain": null, "example": "DB-500-MAIN"},
+        {"col": "F", "idx": 6,  "header": "Destination Name 2",   "key": "destination_name_2",  "meaning": "Destination description.", "domain": null, "example": "DAVE BLUNTS 500"},
+        {"col": "G", "idx": 7,  "header": "Destination Name 3",   "key": "destination_name_3",  "meaning": "Extra destination line.", "domain": null, "example": "MAIN BREAKER"},
+        {"col": "H", "idx": 8,  "header": "Conduit Size",         "key": "conduit_size",        "meaning": "Trade size.", "domain": null, "example": "3/4\""},
+        {"col": "I", "idx": 9,  "header": "Conduit Type",         "key": "conduit_type",        "meaning": "Raceway type.", "domain": "conduit_type", "example": "RMC"},
+        {"col": "J", "idx": 10, "header": "Ref Documents",        "key": "ref_documents",       "meaning": "Comma-sep INDEX NUMBERS into 'Ref Documents & Deviations' sheet.", "domain": null, "example": "1, 2, 3"},
+        {"col": "K", "idx": 11, "header": "Deviations Notes",     "key": "deviations_notes",    "meaning": "Deviation-note NUMBER(S) (col E of Ref sheet).", "domain": null, "example": "1"}
+      ]
+    },
+
+    "FillIndex": {
+      "banner_row": 1,
+      "header_row": 2,
+      "data_start_row": 3,
+      "row_semantics": "One row per WIRE GROUP / CONNECTION SET within a conduit (connection-level, NOT raw cable conductor count).",
+      "write_columns_1_indexed": {
+        "conduit": 1, "wire_ct": 2, "type": 3, "wire_gauge": 4,
+        "s_symbol": 5, "color_1_4": [6, 7, 8, 9],
+        "s_tag_1_4": [10, 11, 12, 13], "s_term_1_4": [18, 19, 20, 21],
+        "d_symbol": 29, "d_tag_1_4": [32, 35, 36, 37], "d_term_1_4": [42, 43, 44, 45],
+        "wire_label_1_4": {"53": "BA", "54": "BB", "55": "BC", "56": "BD"},
+        "wl_mode_1_4": [57, 58, 59, 60]
+      },
+      "columns": [
+        {"col": "A",  "header": "Conduit",    "key": "conduit",   "meaning": "Must match a ConduitIndex Conduit Name. Required.", "domain": null},
+        {"col": "B",  "header": "Wire Ct",    "key": "wire_ct",   "meaning": "CONNECTION count, not raw conductor count.", "domain": "wire_ct"},
+        {"col": "C",  "header": "Type",       "key": "type",      "meaning": "On-drawing FILL TYPE. NOT the PickList FillType (THHN/Cat5e).", "domain": "fill_type"},
+        {"col": "D",  "header": "Wire Gauge", "key": "wire_gauge","meaning": "On-drawing SIZE (e.g. #10, 14AWG, OS2M).", "domain": null},
+        {"col": "E",  "header": "S Symbol",   "key": "s_symbol",  "meaning": "Source symbol block name from symbol_cascade.", "domain": "symbol"},
+        {"col": "F-I","header": "Color 1..4", "key": "color_1..4","meaning": "Wire colors.", "domain": "wire_color"},
+        {"col": "J-M","header": "S Tag 1..4", "key": "s_tag_1..4","meaning": "Source device tags. 'S Tag 1 ' has trailing space.", "domain": null},
+        {"col": "R-U","header": "S Term 1..4","key": "s_term_1..4","meaning": "Source terminals. Never suppressed.", "domain": null},
+        {"col": "AC", "header": "D Symbol",   "key": "d_symbol",  "meaning": "Destination symbol block name.", "domain": "symbol"},
+        {"col": "AF,AI-AK","header": "D Tag 1..4","key": "d_tag_1..4","meaning": "Destination tags. NON-CONTIGUOUS columns.", "domain": null},
+        {"col": "AP-AS","header": "D Term 1..4","key": "d_term_1..4","meaning": "Destination terminals.", "domain": null},
+        {"col": "BA-BD","header": "Wire Label1..4","key": "wire_label_1..4","meaning": "COMPUTED by TEXTJOIN in-workbook. Do NOT populate unless mode=Custom.", "domain": null},
+        {"col": "BE-BH","header": "WL1..4_Mode","key": "wl1..4_mode","meaning": "Label mode per label.", "domain": "label_mode"}
+      ]
+    },
+
+    "RefDocumentsAndDeviations": {
+      "header_row": 2,
+      "data_start_row": 3,
+      "columns": [
+        {"col": "A", "header": "(index #)",          "meaning": "Number the ConduitIndex 'Ref Documents' cell references."},
+        {"col": "B", "header": "DWG#",               "meaning": "Drawing number."},
+        {"col": "C", "header": "Description",         "meaning": "Document description."},
+        {"col": "D", "header": "Manufacturer",        "meaning": "e.g. AIC, PCWA, DUDEK."},
+        {"col": "E", "header": "Deviations Notes #",  "meaning": "Number the ConduitIndex 'Deviations Notes' cell references."},
+        {"col": "F", "header": "Deviations Notes",    "meaning": "The deviation text."}
+      ]
+    }
+  },
+
+  "enums": {
+    "conduit_type": ["XXX", "PVC", "RGS", "PVC/RGS", "FLEX", "RMC", "PER SPEC", "PCS", "RMC-PVC"],
+    "fill_type_ct1": ["POWER", "CONTROL", "TSP", "MFG_CABLE", "FIBER", "CAT-6", "PULL_ROPE"],
+    "fill_type_ct2plus": ["POWER", "CONTROL", "TSP", "MFG_CABLE"],
+    "wire_ct": [1, 2, 3, 4, 6, 8],
+    "wire_color": ["BLACK", "BLUE", "GREEN", "ORANGE", "PURPLE", "RED", "WHITE", "YELLOW"],
+    "label_mode": ["Default", "Custom", "Blank"]
+  },
+
+  "rules": {
+    "wire_ct_is_connection_count": "Wire Ct = number of connections in the group, NOT raw conductors. A 37-conductor cable landed as one MFG_CABLE = Wire Ct 1.",
+    "wire_label_grammar": "SrcName:SrcTag:SrcTerm / DstName:DstTag:DstTerm. Empty segments collapse; drop name when it equals the tag. SrcName=ConduitIndex col B, DstName=col E.",
+    "phase_codes": "3-phase power terms use AutoCAD codes: %%CA=OA, %%CB=OB, %%CC=OC.",
+    "tag_suppression": "Per row, show a tag only when it differs from the previous shown tag; blank consecutive repeats. Terms are NEVER suppressed.",
+    "conduit_type_normalize": "PVC-40->PVC, GRC/RIGID->RGS. Flag anything that doesn't map.",
+    "defaults_must_be_flagged": "Every applied default (Type/Gauge/Color) must be surfaced and the cell flagged amber; never silently apply.",
+    "no_overwrite": "Never overwrite a prior filled workbook. Write _vN versions so previous extraction results are preserved.",
+    "template_is_read_only": "Never write to the template. Copy it, then fill the copy.",
+    "lisa_symbol_contract": "S/D Symbol MUST be a member of named range KEY(Type)_<WireCt>_<L|R>, KEY(Type)=Type.replace('-',''). Type MUST be in Type_<WireCt>. Enforced by lisa_contract.py against Handoff/lisa_symbols.json. A symbol outside its dropdown = LISA cannot map it = no drawing.",
+    "lisa_slot_count": "Each symbol activates exactly BlockTags[symbol] Tag/Term slots; the workbook greys the rest. Do not fill more Tag/Term columns than the slot count.",
+    "lisa_generation": "LISA generates one DWG per conduit + one .wdp project file. It can consume a conduit-list .txt (names, one per line/comma-separated) to generate a subset."
+  },
+
+  "lisa_contract_file": "Handoff/lisa_symbols.json (regenerate with export_lisa_contract.py when the block library changes)"
+}

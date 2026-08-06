@@ -1,0 +1,810 @@
+{
+  "_meta": {
+    "updated": "2026-07-16T22:53:21+00:00",
+    "note": "Self-learning IDP extraction knowledge base."
+  },
+  "headers": {
+    "conduit_name": {
+      "contexts": [
+        "conduit"
+      ],
+      "aliases": {
+        "NO": {
+          "count": 6,
+          "last_seen": "2026-07-16T22:52:39+00:00"
+        },
+        "CONDUIT NO": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CONDUIT ID": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CONDUIT TAG": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "COND NO": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CONDUIT NAME": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "TAG": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    },
+    "conduit_size": {
+      "contexts": [
+        "conduit"
+      ],
+      "aliases": {
+        "CONDUIT SIZE": {
+          "count": 6,
+          "last_seen": "2026-07-16T22:52:39+00:00"
+        },
+        "TRADE SIZE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "SIZE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "COND SIZE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CONDUIT DIA": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "RACEWAY SIZE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "RACEWAY DIA": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "COND. DIAMETER INCHES": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:34+00:00"
+        }
+      }
+    },
+    "conduit_type": {
+      "contexts": [
+        "conduit"
+      ],
+      "aliases": {
+        "TYPE": {
+          "count": 5,
+          "last_seen": "2026-07-16T22:52:39+00:00"
+        },
+        "MATERIAL": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CONDUIT TYPE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "RACEWAY TYPE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    },
+    "cable_number": {
+      "contexts": [
+        "conduit"
+      ],
+      "aliases": {
+        "CABLE NUMBER": {
+          "count": 6,
+          "last_seen": "2026-07-16T22:52:39+00:00"
+        },
+        "CABLE NO": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CABLES": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CABLE NOS": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    },
+    "cable_no": {
+      "contexts": [
+        "cable"
+      ],
+      "aliases": {
+        "NO": {
+          "count": 7,
+          "last_seen": "2026-07-16T22:53:21+00:00"
+        },
+        "CABLE NO": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CABLE NUMBER": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "WIRE NO": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    },
+    "cable_spec": {
+      "contexts": [
+        "cable"
+      ],
+      "aliases": {
+        "CABLE": {
+          "count": 6,
+          "last_seen": "2026-07-16T22:53:21+00:00"
+        },
+        "CONDUCTOR": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CABLE SIZE": {
+          "count": 2,
+          "last_seen": "2026-07-16T21:30:53+00:00"
+        },
+        "WIRE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CABLE DESCRIPTION": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "COND QTY SIZE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    },
+    "cable_type": {
+      "contexts": [
+        "cable"
+      ],
+      "aliases": {
+        "TYPE": {
+          "count": 6,
+          "last_seen": "2026-07-16T22:52:39+00:00"
+        },
+        "CABLE TYPE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    },
+    "routing": {
+      "contexts": [
+        "cable"
+      ],
+      "aliases": {
+        "ROUTING": {
+          "count": 5,
+          "last_seen": "2026-07-16T22:08:36+00:00"
+        },
+        "ROUTE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "CONDUIT": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "RACEWAY": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "IN CONDUIT": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "ROUTED IN": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    },
+    "source": {
+      "contexts": [
+        "conduit",
+        "cable"
+      ],
+      "aliases": {
+        "FROM": {
+          "count": 11,
+          "last_seen": "2026-07-16T22:52:39+00:00"
+        },
+        "SOURCE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "ORIGIN": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "FED FROM": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "FROM EQUIP": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "FEEDER FROM": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    },
+    "destination": {
+      "contexts": [
+        "conduit",
+        "cable"
+      ],
+      "aliases": {
+        "TO": {
+          "count": 10,
+          "last_seen": "2026-07-16T22:52:39+00:00"
+        },
+        "DESTINATION": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "DEST": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "LOAD": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "FEEDS": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "TO EQUIP": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    },
+    "remarks": {
+      "contexts": [
+        "conduit",
+        "cable"
+      ],
+      "aliases": {
+        "REMARKS": {
+          "count": 10,
+          "last_seen": "2026-07-16T22:52:39+00:00"
+        },
+        "REMARK": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "NOTES": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "COMMENTS": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    },
+    "ref_documents": {
+      "contexts": [
+        "conduit"
+      ],
+      "aliases": {
+        "REF DOCUMENTS": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "REFERENCE": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "REF DWG": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "REFERENCE DRAWING": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        },
+        "REF DOC": {
+          "count": 1,
+          "last_seen": "2026-07-16T20:48:08+00:00"
+        }
+      }
+    }
+  },
+  "values": {
+    "conduit_type": {
+      "PVC-40": {
+        "value": "PVC",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "PVC-80": {
+        "value": "PVC",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "PVC 40": {
+        "value": "PVC",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "PVC 80": {
+        "value": "PVC",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "SCH40 PVC": {
+        "value": "PVC",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "SCH80 PVC": {
+        "value": "PVC",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "GRC": {
+        "value": "RGS",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "RIGID": {
+        "value": "RGS",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "RGC": {
+        "value": "RGS",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "RIGID STEEL": {
+        "value": "RGS",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "RMC-PVC": {
+        "value": "RMC-PVC",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      },
+      "PVC/RGS": {
+        "value": "PVC/RGS",
+        "count": 1,
+        "last_seen": "2026-07-16T20:48:08+00:00"
+      }
+    }
+  },
+  "titles": {
+    "CONDUIT SCHEDULE": {
+      "count": 5,
+      "last_seen": "2026-07-16T22:52:39+00:00"
+    },
+    "CABLE AND CONDUIT SCHEDULE": {
+      "count": 2,
+      "last_seen": "2026-07-16T21:30:53+00:00"
+    },
+    "CONDUIT AND CABLE SCHEDULE": {
+      "count": 1,
+      "last_seen": "2026-07-16T20:48:08+00:00"
+    },
+    "CABLE SCHEDULE": {
+      "count": 1,
+      "last_seen": "2026-07-16T20:48:08+00:00"
+    },
+    "RACEWAY SCHEDULE": {
+      "count": 1,
+      "last_seen": "2026-07-16T20:48:08+00:00"
+    },
+    "RACEWAY AND CABLE SCHEDULE": {
+      "count": 1,
+      "last_seen": "2026-07-16T20:48:08+00:00"
+    }
+  },
+  "log": [
+    {
+      "when": "2026-07-16T20:48:08+00:00",
+      "kind": "seed",
+      "detail": "initialized knowledge base"
+    },
+    {
+      "when": "2026-07-16T20:48:34+00:00",
+      "kind": "learn_header",
+      "detail": "'COND. DIAMETER INCHES' -> conduit_size (count=1)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_title",
+      "detail": "'CONDUIT SCHEDULE' (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> conduit_name (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'CONDUIT SIZE' -> conduit_size (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'TYPE' -> conduit_type (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE NUMBER' -> cable_number (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'FROM' -> source (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'TO' -> destination (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'REMARKS' -> remarks (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> cable_no (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE' -> cable_spec (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'TYPE' -> cable_type (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'FROM' -> source (count=3)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'TO' -> destination (count=3)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'ROUTING' -> routing (count=2)"
+    },
+    {
+      "when": "2026-07-16T20:49:10+00:00",
+      "kind": "learn_header",
+      "detail": "'REMARKS' -> remarks (count=3)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_title",
+      "detail": "'CABLE AND CONDUIT SCHEDULE' (count=2)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> conduit_name (count=3)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'CONDUIT SIZE' -> conduit_size (count=3)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE NUMBER' -> cable_number (count=3)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'FROM' -> source (count=4)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'TO' -> destination (count=4)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'REMARKS' -> remarks (count=4)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> cable_no (count=3)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE SIZE' -> cable_spec (count=2)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'TYPE' -> cable_type (count=3)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'FROM' -> source (count=5)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'TO' -> destination (count=5)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'ROUTING' -> routing (count=3)"
+    },
+    {
+      "when": "2026-07-16T21:30:53+00:00",
+      "kind": "learn_header",
+      "detail": "'REMARKS' -> remarks (count=5)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_title",
+      "detail": "'CONDUIT SCHEDULE' (count=3)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> conduit_name (count=4)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'CONDUIT SIZE' -> conduit_size (count=4)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'TYPE' -> conduit_type (count=3)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE NUMBER' -> cable_number (count=4)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'FROM' -> source (count=6)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'TO' -> destination (count=6)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'REMARKS' -> remarks (count=6)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> cable_no (count=4)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE' -> cable_spec (count=3)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'TYPE' -> cable_type (count=4)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'FROM' -> source (count=7)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'TO' -> destination (count=7)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'ROUTING' -> routing (count=4)"
+    },
+    {
+      "when": "2026-07-16T22:05:39+00:00",
+      "kind": "learn_header",
+      "detail": "'REMARKS' -> remarks (count=7)"
+    },
+    {
+      "when": "2026-07-16T22:08:35+00:00",
+      "kind": "learn_title",
+      "detail": "'CONDUIT SCHEDULE' (count=4)"
+    },
+    {
+      "when": "2026-07-16T22:08:35+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> conduit_name (count=5)"
+    },
+    {
+      "when": "2026-07-16T22:08:35+00:00",
+      "kind": "learn_header",
+      "detail": "'CONDUIT SIZE' -> conduit_size (count=5)"
+    },
+    {
+      "when": "2026-07-16T22:08:35+00:00",
+      "kind": "learn_header",
+      "detail": "'TYPE' -> conduit_type (count=4)"
+    },
+    {
+      "when": "2026-07-16T22:08:35+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE NUMBER' -> cable_number (count=5)"
+    },
+    {
+      "when": "2026-07-16T22:08:35+00:00",
+      "kind": "learn_header",
+      "detail": "'FROM' -> source (count=8)"
+    },
+    {
+      "when": "2026-07-16T22:08:35+00:00",
+      "kind": "learn_header",
+      "detail": "'TO' -> destination (count=8)"
+    },
+    {
+      "when": "2026-07-16T22:08:35+00:00",
+      "kind": "learn_header",
+      "detail": "'REMARKS' -> remarks (count=8)"
+    },
+    {
+      "when": "2026-07-16T22:08:36+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> cable_no (count=5)"
+    },
+    {
+      "when": "2026-07-16T22:08:36+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE' -> cable_spec (count=4)"
+    },
+    {
+      "when": "2026-07-16T22:08:36+00:00",
+      "kind": "learn_header",
+      "detail": "'TYPE' -> cable_type (count=5)"
+    },
+    {
+      "when": "2026-07-16T22:08:36+00:00",
+      "kind": "learn_header",
+      "detail": "'FROM' -> source (count=9)"
+    },
+    {
+      "when": "2026-07-16T22:08:36+00:00",
+      "kind": "learn_header",
+      "detail": "'TO' -> destination (count=9)"
+    },
+    {
+      "when": "2026-07-16T22:08:36+00:00",
+      "kind": "learn_header",
+      "detail": "'ROUTING' -> routing (count=5)"
+    },
+    {
+      "when": "2026-07-16T22:08:36+00:00",
+      "kind": "learn_header",
+      "detail": "'REMARKS' -> remarks (count=9)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_title",
+      "detail": "'CONDUIT SCHEDULE' (count=5)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> conduit_name (count=6)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'CONDUIT SIZE' -> conduit_size (count=6)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'TYPE' -> conduit_type (count=5)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE NUMBER' -> cable_number (count=6)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'FROM' -> source (count=10)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'TO' -> destination (count=10)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'REMARKS' -> remarks (count=10)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> cable_no (count=6)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE' -> cable_spec (count=5)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'TYPE' -> cable_type (count=6)"
+    },
+    {
+      "when": "2026-07-16T22:52:39+00:00",
+      "kind": "learn_header",
+      "detail": "'FROM' -> source (count=11)"
+    },
+    {
+      "when": "2026-07-16T22:53:21+00:00",
+      "kind": "learn_header",
+      "detail": "'NO' -> cable_no (count=7)"
+    },
+    {
+      "when": "2026-07-16T22:53:21+00:00",
+      "kind": "learn_header",
+      "detail": "'CABLE' -> cable_spec (count=6)"
+    }
+  ]
+}

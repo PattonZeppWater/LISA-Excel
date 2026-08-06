@@ -1,0 +1,588 @@
+{
+  "rules": [
+    {
+      "type": "value_rule",
+      "match": "ETHERNET",
+      "result": "CAT-6",
+      "context": "type",
+      "note": "off-dropdown type normalized to the legal dropdown"
+    },
+    {
+      "type": "value_rule",
+      "match": "PULL ROPE",
+      "result": "PULL_ROPE",
+      "context": "type",
+      "note": "normalize spacing to the legal value"
+    },
+    {
+      "type": "value_rule",
+      "match": "MFR CABLE",
+      "result": "MFG_CABLE",
+      "context": "type",
+      "note": "vendor cable → manufactured cable"
+    },
+    {
+      "type": "note",
+      "match": "GROUND rows",
+      "result": "fold into primary group (+GRN)",
+      "context": "type",
+      "note": "no standalone GROUND type row is emitted"
+    },
+    {
+      "type": "note",
+      "match": "Wire Ct",
+      "result": "connection count, not conductors",
+      "context": "connection",
+      "note": "3-phase feeder → Ct 3 (ØA/ØB/ØC); POWER lands at Ct 1–4"
+    },
+    {
+      "type": "note",
+      "match": "POWER colors",
+      "result": "BRN / ORG / YEL (+GRN gnd)",
+      "context": "color",
+      "note": "480V phase colors — auto-applied & amber-flagged"
+    },
+    {
+      "type": "note",
+      "match": "TSP",
+      "result": "RED/BLK (may be multi-pair)",
+      "context": "color",
+      "note": "signal pair; Wire Ct can be >1"
+    },
+    {
+      "type": "note",
+      "match": "CONTROL color",
+      "result": "learned per project",
+      "context": "color",
+      "note": "BLU or RED vary by project — never hard-defaulted"
+    },
+    {
+      "type": "note",
+      "match": "S/D Symbol",
+      "result": "must be in KEY(Type)_<Ct>_<L|R> dropdown",
+      "context": "symbol",
+      "note": "else LISA can't map it — auto-snapped or flagged"
+    },
+    {
+      "type": "note",
+      "match": "Wire Label",
+      "result": "TEXTJOIN-computed in workbook",
+      "context": "",
+      "note": "fill tags/terms only; never populate the label columns"
+    },
+    {
+      "type": "note",
+      "match": "Output",
+      "result": "never overwrite (versioned _vN)",
+      "context": "",
+      "note": "previous extraction results are preserved"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "TERMINAL BLOCK",
+      "result": "TB_Square",
+      "context": "",
+      "note": "a terminal block symbol"
+    },
+    {
+      "type": "note",
+      "match": "terminal block",
+      "result": "",
+      "context": "",
+      "note": "TERMINAL BLOCK: Symbol=TB_Square (TB-TB_Square if 2 terminals). Tag = the TB-# label (e.g. TB-3), goes in S/D Tag 1. Terminals = the numbered points -> Term 1=1, Term 2=2, ..."
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "CONTACT NO",
+      "result": "Contact_NO",
+      "context": "",
+      "note": "normally-open contact"
+    },
+    {
+      "type": "note",
+      "match": "contact no",
+      "result": "",
+      "context": "",
+      "note": "CONTACT NO: symbol=Contact_NO_L/_R. Relay contacts tagged R# (e.g. R2). Terms are the numbered points. Example: Contact NO, tag R2, Term 1=9, Term 2=10."
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "GND",
+      "result": "TB_Round",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1163-23E.dwg, block TB_Round_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "PS-40-01",
+      "result": "PressureSwitch_NO",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1163-36E.dwg, block PressureSwitch_NO_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "OPEN POSITION",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "CLOSED POSITION",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "CALL TO OPEN",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "CALL TO CLOSE",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "COMMON",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "OPEN SIGNAL",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "CLSOED SIGNAL",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "REMOTE READY",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "TB-AC1",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "TB-DC1",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "CALL TO STOP",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "ACTUATOR 120V",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-80E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "EXO202 PASS THROUGH",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-84E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "OPEN STATUS",
+      "result": "PullBox",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-85E.dwg, block PullBox_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "CLOSED STATUS",
+      "result": "PullBox",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-85E.dwg, block PullBox_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "EXO302 PASS THROUGH",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-90E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "CLOSED SIGNAL",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-17E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "NEUTRAL",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-29E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "VALVE OPEN",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-29E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "VALVE CLOSED",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-29E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "OPEN",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-29E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "CLOSE",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-29E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "L/R IN REMOTE",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-29E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "PXOU34-1 PASS THROUGH",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-29E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "PXOU34-2 PASS THROUGH",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-30E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "PLC (DO)",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-31E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "PLC (DI)",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-31E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "PXO202 PASS THROUGH",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-38E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "PXO302 PASS THROUGH",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-43E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "TB-B",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-52E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "RXO202 PASS THROUGH",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-52E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "TB-C",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-53E.dwg, block TB_Square_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "RXO302 PASS THROUGH",
+      "result": "TB_Square",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-56E.dwg, block TB_Square_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "FLS",
+      "result": "FlowSwitch_NC",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1154-01E.dwg, block FlowSwitch_NC_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "RJ45",
+      "result": "RJ45",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1154-01E.dwg, block RJ45_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "TAS",
+      "result": "TemperatureSwitch_NC",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1154-01E.dwg, block TemperatureSwitch_NC_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "VALVE",
+      "result": "Valve",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1154-01E.dwg, block Valve_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "EXO202",
+      "result": "PullBox",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-70E.dwg, block PullBox_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "EXO302",
+      "result": "PullBox",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-71E.dwg, block PullBox_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "VALVE ACTUATOR",
+      "result": "PullBox",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-10E.dwg, block PullBox_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "RXO202",
+      "result": "PullBox",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-55E.dwg, block PullBox_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "RXO302",
+      "result": "PullBox",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-56E.dwg, block PullBox_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "VALVE RXO302",
+      "result": "PullBox",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1128-62E.dwg, block PullBox_L)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "PULL BOX",
+      "result": "PullBox",
+      "context": "",
+      "note": "learned from a finished IDP drawing (73.1154-03E.dwg, block PullBox_R)"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "ESW",
+      "result": "RJ45",
+      "note": "harvested: ethernet switch (Stratford, PCWA)",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "3VFD",
+      "result": "VFD",
+      "note": "harvested: VFD bucket tag e.g. 3VFD1 (Crows) - boundary-safe",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "50-VFD",
+      "result": "VFD",
+      "note": "harvested: VFD tag 50-VFD-0x (Stratford)",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "MCS",
+      "result": "MTRStrt",
+      "note": "harvested: motor control section (Lake Supply)",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "MSS",
+      "result": "MTRStrt",
+      "note": "harvested: motor starter section (Lake Supply)",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "PDB",
+      "result": "TB_Square",
+      "note": "harvested: power distribution block (Lake Supply, Crows)",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "LANDING LUG",
+      "result": "TB_Square",
+      "note": "harvested: landing lug / neutral lug (Crows)",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "TB-DI",
+      "result": "TB_Square",
+      "note": "harvested: PLC discrete-input terminal (Stratford)",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "TB-AI",
+      "result": "TB_Square",
+      "note": "harvested: PLC analog-input terminal (Stratford)",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "TX-",
+      "result": "XFMR",
+      "note": "harvested: transformer tag TX-x (Stratford TX-LEQ, Crows TX-L)",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "OL-",
+      "result": "MTRStrt",
+      "note": "harvested: overload relay = motor-starter family (San Rafael OL-10/OL-20)",
+      "source": "finished-IDP harvest"
+    },
+    {
+      "type": "text_fix",
+      "match": "klDS",
+      "result": "MDS",
+      "context": "gonzales conduit schedule",
+      "note": "",
+      "source": "manual"
+    },
+    {
+      "type": "value_rule",
+      "match": "CL2RESIDUAL",
+      "result": "",
+      "context": "conduit_type",
+      "note": "NEEDS REVIEW — Conduit Type never resolved from the source; set Result to the correct type (RMC, PVC, RGS, ...)."
+    },
+    {
+      "type": "value_rule",
+      "match": "PNL001",
+      "result": "",
+      "context": "conduit_type",
+      "note": "NEEDS REVIEW — Conduit Type never resolved from the source; set Result to the correct type (RMC, PVC, RGS, ...)."
+    },
+    {
+      "type": "value_rule",
+      "match": "C001",
+      "result": "",
+      "context": "conduit_type",
+      "note": "NEEDS REVIEW — Conduit Type never resolved from the source; set Result to the correct type (RMC, PVC, RGS, ...)."
+    },
+    {
+      "type": "value_rule",
+      "match": "A000B",
+      "result": "",
+      "context": "conduit_type",
+      "note": "NEEDS REVIEW — Conduit Type never resolved from the source; set Result to the correct type (RMC, PVC, RGS, ...)."
+    },
+    {
+      "type": "value_rule",
+      "match": "MDS—400A",
+      "result": "",
+      "context": "conduit_type",
+      "note": "NEEDS REVIEW — Conduit Type never resolved from the source; set Result to the correct type (RMC, PVC, RGS, ...)."
+    },
+    {
+      "type": "value_rule",
+      "match": "MDS—400B",
+      "result": "",
+      "context": "conduit_type",
+      "note": "NEEDS REVIEW — Conduit Type never resolved from the source; set Result to the correct type (RMC, PVC, RGS, ...)."
+    },
+    {
+      "type": "value_rule",
+      "match": "INF-405",
+      "result": "",
+      "context": "conduit_type",
+      "note": "NEEDS REVIEW — Conduit Type never resolved from the source; set Result to the correct type (RMC, PVC, RGS, ...)."
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "PANEL P2",
+      "result": "",
+      "context": "",
+      "note": "NEEDS REVIEW (L001, D side) — low-confidence match, fell back to CB-CB-CB-TB_Square_R. Set Result to the correct device token (e.g. CB, DISC, TB_Square, MTR)."
+    },
+    {
+      "type": "value_rule",
+      "match": "L001",
+      "result": "",
+      "context": "conduit_type",
+      "note": "NEEDS REVIEW — Conduit Type never resolved from the source; set Result to the correct type (RMC, PVC, RGS, ...)."
+    },
+    {
+      "type": "symbol_keyword",
+      "match": "WPPOWERJBOX @ FIT/FE 24-01",
+      "result": "",
+      "context": "",
+      "note": "NEEDS REVIEW (L003, D side) — low-confidence match, fell back to CB-TB_Square_R. Set Result to the correct device token (e.g. CB, DISC, TB_Square, MTR)."
+    }
+  ],
+  "notes": "Terminal block example (taught): tag TB-3, Term 1 = 1, Term 2 = 2 => a 2-terminal terminal block; wire labels read ...:TB-3:1 and ...:TB-3:2 (same tag, ascending terms).\nContact NO example (taught): tag R2, Term 1 = 9, Term 2 = 10 -> symbol Contact_NO; labels ...:R2:9 and ...:R2:10.",
+  "removed": []
+}

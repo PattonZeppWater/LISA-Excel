@@ -24,3 +24,16 @@ Thumbs.db
 *.bak
 *.dwl
 *.dwl2
+
+# ── Autofill (merged IDP Extractor) ─────────────────────────────────────────
+# Version snapshots are full folder copies (~78 MB each) and redundant with git,
+# which is already version control. The Update button still pulls the latest from
+# the shared server path in version_source.txt, and Training re-publishes locally.
+# The trained knowledge base itself (learned_logic.json / knowledge_base.json) IS
+# tracked, so a fresh clone ships the learned logic.
+archive/
+Version Control/
+Autofill/build_staging/
+Autofill/__pycache__/
+Autofill/ErrorReports/
+*.tmp

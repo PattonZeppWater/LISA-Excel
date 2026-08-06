@@ -9,3 +9,15 @@ pypdf
 pywin32
 requests
 pywebview
+
+# ── Autofill (merged IDP Extractor) extras — needed by the /autofill panel's scan
+# pipeline. Without rapidocr_onnxruntime the vector conduit-schedule OCR silently
+# reads zero rows and every scan reports INCOMPLETE, so keep these in the venv.
+PyMuPDF
+pdfplumber
+Pillow
+numpy
+rapidocr_onnxruntime
+
+# Submittal Log "finalize PDF" feature (optional; also needs Microsoft Word installed).
+docx2pdf
