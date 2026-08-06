@@ -363,19 +363,66 @@ def extract_learned_rules(scan):
     return rules
 
 
+def _landing_block(side, library):
+    """The library's terminal-block LANDING block for a side — prefer the plainest TB_Square,
+    then TB, then any TB-family block actually in the library and legal in the current template."""
+    legal = _legal_symbols()
+    for base in ("TB_Square", "TB"):
+        if library.get(base, {}).get(side) and (not legal or f"{base}_{side}" in legal):
+            return f"{base}_{side}"
+    for base, counts in library.items():
+        if counts.get(side) and "TB" in re.sub(r"[^A-Z0-9]", "", base.upper()):
+            cand = f"{base}_{side}"
+            if not legal or cand in legal:
+                return cand
+    return None
+
+
 def apply_project_symbols(records, library, source_label=None):
-    """Upgrade S/D Symbol to a project-confirmed block where one exists for the
-    already-recognized device token. `source_label` (e.g. the project's CAD
-    folder) is recorded as the field's provenance. Returns count upgraded."""
+    """Reconcile S/D Symbol against real blocks — the symbol library and this project's own DWGs.
+    Two passes per non-ground end:
+      (A) LANDING CORRECTION — if the endpoint text is an enclosure/panel/PLC/switchgear landing
+          but the symbol is a driven-load block (motor/starter), it was hijacked by a load name
+          inside the landing description; snap it to the library's terminal-block landing. This is
+          what fixes destinations coming out as motors when they're really terminal-block landings.
+      (B) PROJECT CONFIRMATION — upgrade to a project-confirmed block where THIS project's drawings
+          place one for the recognized device token (e.g. TB_Square -> CB-TB_Square).
+    `source_label` is recorded as the field's provenance. Returns count changed."""
     if not library:
         return 0
+    try:
+        import symbol_infer
+    except Exception:
+        symbol_infer = None
     upgraded = 0
     for rec in records or []:
+        endpoint_text = {
+            "L": " ".join(str(x) for x in (rec.get("source") or []) if x),
+            "R": " ".join(str(x) for x in (rec.get("dest") or []) if x),
+        }
         for g in rec.get("fill", []) or []:
+            if g.get("is_ground"):
+                continue
             for side_key, sym_key, conf_key in (("L", "s_symbol", "s_symbol_conf"),
                                                  ("R", "d_symbol", "d_symbol_conf")):
                 token = g.get(f"{'s' if side_key == 'L' else 'd'}_symbol_token")
                 cur = g.get(sym_key)
+                text = endpoint_text[side_key]
+                # (A) landing correction — endpoint is an enclosure but the symbol is a load block
+                if (symbol_infer and cur and text
+                        and symbol_infer.is_landing_text(text) and symbol_infer.is_load_block(cur)):
+                    cand = _landing_block(side_key, library)
+                    if cand and cand != cur:
+                        g[sym_key] = cand
+                        g[conf_key] = max(float(g.get(conf_key) or 0), 0.85)
+                        g[f"{sym_key}_note"] = (
+                            f"{cur} -> {cand} (landing corrected: endpoint is an enclosure/panel — "
+                            "lands on a terminal block, not a motor)")
+                        if source_label:
+                            g[f"{sym_key}_src"] = source_label
+                        cur = cand
+                        upgraded += 1
+                # (B) project-confirmed upgrade within the recognized token family
                 if not cur:
                     continue
                 cand = project_symbol(token or _strip_side(cur), side_key, library)

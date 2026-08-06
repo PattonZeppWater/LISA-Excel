@@ -82,6 +82,42 @@ _LANDING_SIGNAL = {
 }
 
 
+# Named enclosures / panels / switchgear / PLC racks / terminal cabinets. A conductor routed
+# TO (or FROM) one of these TERMINATES ON A TERMINAL BLOCK inside it — the enclosure IS the
+# landing, even when a driven load (MOTOR / PUMP / STARTER) is named alongside it (that names
+# what the enclosure feeds, not the physical landing). This is the #1 reason DESTINATIONS were
+# mislabeled as motors: a schedule "TO MCC-2 (PUMP 2 STARTER)" is a terminal-block landing, not
+# a motor. NOTE: pull/junction boxes are deliberately NOT here — they have their own PullBox block.
+_ENCLOSURE_RE = re.compile(
+    r"\bMCC\b|\bMCC-|MOTOR CONTROL CENTER"
+    r"|\bSWBD\b|\bSWGR\b|SWITCH ?BOARD|SWITCH ?GEAR"
+    r"|\bPANEL\b|\bPANEL-|\bPNL\b|\bPNL-|PANEL ?BOARD"
+    r"|\bLCP\b|\bMCP\b|\bRCP\b|\bPCP\b|\bCP-\d|\bLP-\d"
+    r"|DISTRIBUTION (?:PANEL|BOARD|SECTION)|\bPDP\b|\bPDB\b|\bMSB\b|LOAD ?CENTER"
+    r"|\bPLC\b|\bRIO\b|\bRTU\b"
+    r"|TERMINAL (?:BLOCK|STRIP|BOX|CABINET)|\bTB\b|\bTB-"
+    r"|\bCABINET\b|\bENCLOSURE\b",
+    re.I,
+)
+_GROUND_RE = re.compile(r"\bGROUND\b|\bGND\b|\bEGC\b", re.I)
+# A driven-load symbol block (motor / pump / starter) — used to detect a destination that was
+# mislabeled as a load when its endpoint text is actually an enclosure landing.
+_LOAD_BLOCK_RE = re.compile(r"MTRSTRT|\bMTR|MOTOR|STARTER|\bPMP", re.I)
+
+
+def is_landing_text(text):
+    """True when a From/To endpoint names an enclosure / panel / PLC / switchgear / terminal
+    cabinet (a terminal-block landing) and is NOT a ground — regardless of any driven load named
+    with it. Shared by the recognizer and the post-scan project-symbol pass (idp_project_symbols)."""
+    u = str(text or "").upper()
+    return bool(_ENCLOSURE_RE.search(u)) and not _GROUND_RE.search(u)
+
+
+def is_load_block(symbol):
+    """True when a symbol block name is a driven-load device (motor / pump / starter)."""
+    return bool(_LOAD_BLOCK_RE.search(str(symbol or "").upper()))
+
+
 def register_keyword(keyword, token):
     """Add a user-taught device keyword → library token rule (checked before the
     built-in rules). Called by logic_store.apply()."""
@@ -144,8 +180,16 @@ def recognize_device(text, wire_ct=None):
             trail = ''               # prefix tag (ends in '-', ')', …): match as a prefix
         if re.search(r'(?<![A-Z0-9])' + re.escape(ku) + trail, u):
             return tok
+    enclosure_landing = bool(_ENCLOSURE_RE.search(u)) and not _GROUND_RE.search(u)
     for pat, token, _ in _RULES:
         if re.search(pat, u):
+            # A named enclosure/panel/PLC/switchgear landing terminates on a TERMINAL BLOCK, so a
+            # driven-load keyword (MOTOR/PUMP/STARTER) found alongside it must NOT hijack the symbol
+            # into a motor/starter — skip those tokens and let it fall through to the terminal-block
+            # landing below. Ground is exempt (handled as GND). Dedicated endpoint devices — CB /
+            # DISC / VFD / XFMR / instruments / valves — are NOT suppressed and still win.
+            if enclosure_landing and token in ("MTR", "MTRStrt"):
+                continue
             # resolve phase for motors/transformers — by name, else by wire count
             if token in ("XFMR", "MTR"):
                 three = bool(re.search(r"3\s*PH|3-PH|3PH|480|3\s*PHASE", u)) \
@@ -154,6 +198,11 @@ def recognize_device(text, wire_ct=None):
             if token in ("Inst", "Inst_Sensor"):
                 return f"{token}_4W" if re.search(r"4\s*W|4-W|4 WIRE|4W", u) else f"{token}_2W"
             return token
+    # No dedicated device matched, but the endpoint is an enclosure/panel/PLC landing → the
+    # conductor lands on a terminal block. Return TB_Square so infer_symbol scores it as a real
+    # recognized device (proper confidence), not the generic no-match fallback.
+    if enclosure_landing:
+        return "TB_Square"
     return None
 
 

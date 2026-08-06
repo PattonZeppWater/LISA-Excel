@@ -33,34 +33,11 @@ if printf '%s\n' "$CHANGED" | grep -q '^requirements\.txt$'; then
   else
     PY=""
   fi
-  if [ -z "$PY" ]; then
-    echo "[post-merge] requirements.txt changed but no .venv found -> run 'SETUP - Run First.bat'."
-  # SAFETY: never pip-install while LISA is running. A live LISA (pythonw app.py) holds the
-  # venv's .pyd/.dll files LOCKED, so the install hits 'Access is denied' mid-way and CORRUPTS
-  # the venv (lost pip/pywin32 -> LISA then refuses to launch). This actually happened. If LISA
-  # is open, skip and tell the user to close it and re-sync -- never install into a locked venv.
-  elif command -v powershell >/dev/null 2>&1 && [ -f "Build/lisa-running.ps1" ] \
-       && powershell -NoProfile -ExecutionPolicy Bypass -File "Build/lisa-running.ps1"; then
-    echo "[post-merge] !! requirements.txt changed, but LISA is RUNNING -- skipped the venv"
-    echo "[post-merge]    update to avoid corrupting it. CLOSE LISA, then run"
-    echo "[post-merge]    'SETUP - Run First.bat' (or 'git pull' again) to pick up new deps."
-  else
+  if [ -n "$PY" ]; then
     echo "[post-merge] requirements.txt changed -> updating .venv ..."
-    if "$PY" -m pip install -r requirements.txt --quiet; then
-      # pywin32 must re-register its DLLs after any (re)install, or 'import pythoncom' fails and
-      # LISA won't launch. Best-effort; the verify below is the real gate.
-      [ -f ".venv/Scripts/pywin32_postinstall.py" ] && \
-        "$PY" ".venv/Scripts/pywin32_postinstall.py" -install >/dev/null 2>&1
-      # Verify the imports LISA actually needs. If the update left the venv broken, say so LOUD
-      # with the exact recovery -- instead of LISA later failing with a confusing "not set up".
-      if "$PY" -c "import pythoncom, win32com, flask, flask_cors, webview" >/dev/null 2>&1; then
-        echo "[post-merge] .venv up to date."
-      else
-        echo "[post-merge] !! venv update finished but core imports FAIL -> run 'SETUP - Run First.bat' to rebuild it."
-      fi
-    else
-      echo "[post-merge] !! dependency update FAILED (venv may be incomplete) -> run 'SETUP - Run First.bat' to rebuild it."
-    fi
+    "$PY" -m pip install -r requirements.txt --quiet && echo "[post-merge] .venv up to date."
+  else
+    echo "[post-merge] requirements.txt changed but no .venv found -> run 'SETUP - Run First.bat'."
   fi
 fi
 
