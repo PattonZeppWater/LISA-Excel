@@ -13,6 +13,21 @@ echo    LISA Setup  -  run this ONCE  (needs internet)
 echo ============================================================
 echo.
 
+REM --- 0. refuse to run while LISA is open --------------------
+REM A running LISA holds the .venv files LOCKED; the rebuild below would fail 'Access is
+REM denied' partway and CORRUPT the venv. Bail early with a clear message instead.
+if exist "Build\lisa-running.ps1" (
+  powershell -NoProfile -ExecutionPolicy Bypass -File "Build\lisa-running.ps1"
+  if not errorlevel 1 (
+    echo.
+    echo   LISA appears to be RUNNING. Close the LISA window first ^(and make sure no
+    echo   pythonw.exe is left in Task Manager^), then run this setup again.
+    echo.
+    pause
+    exit /b 1
+  )
+)
+
 REM --- 1. look for an already-installed Python 3.10-3.12 -------
 echo [1/5] Looking for Python 3.10-3.12 ...
 set "PYEXE="
