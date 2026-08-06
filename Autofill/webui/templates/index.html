@@ -67,6 +67,10 @@
               <button class="update-btn" id="btn_update" onclick="runUpdate()" disabled title="Pull the latest published version from the shared server folder (enabled only when out of date)">Update</button>
               <span class="update-txt neutral" id="update_status" title="Version status vs the shared folder">—</span>
             </div>
+            <div class="update-bar" id="revert_bar" style="display:none">
+              <select class="sel" id="revert_select" title="Pick a previously published version to roll this computer back to"></select>
+              <button class="update-btn" id="btn_revert" onclick="runRevert()" title="Roll this computer to the selected version, then reload LISA automatically">⤺ Revert to version</button>
+            </div>
           </div>
           <div class="hero-art">
             <div class="pillars">

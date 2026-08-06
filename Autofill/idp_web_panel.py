@@ -820,6 +820,47 @@ class Api:
         return {"log": "\n".join(STATE.update_lines), "running": STATE.update_running,
                 "applied": STATE.update_applied}
 
+    def list_versions(self, path=""):
+        """Versions available to roll to from the shared folder (numeric-sorted, newest first),
+        plus the local current — powers the Revert dropdown."""
+        import idp_versioning, idp_settings
+        pull = (path or "").strip().strip('"') or idp_settings.get_version_pull_dir()
+        return idp_versioning.list_versions(pull)
+
+    def run_revert(self, target, path=""):
+        """Roll THIS install to a specific published version (revert to an older one, or switch to
+        any). Reuses the SAME status channel + auto-reload as Update — poll_update() streams
+        progress and restart_app() relaunches on the reverted code — so the front-end reuses one
+        poll loop and there's a single restart path (no divergence)."""
+        if STATE.update_running:
+            return False
+        import idp_versioning, idp_settings, threading
+        pull = (path or "").strip().strip('"') or idp_settings.get_version_pull_dir()
+        STATE.update_lines = []
+        STATE.update_applied = False
+
+        def _r():
+            STATE.update_running = True
+            try:
+                res = idp_versioning.apply_version(
+                    pull, target, log=lambda m: STATE.update_lines.append(str(m)))
+                if not res.get("ok"):
+                    STATE.update_lines.append("Revert failed: " + res.get("error", "unknown"))
+                elif not res.get("changed"):
+                    STATE.update_lines.append(res.get("note", "Already on that version."))
+                else:
+                    STATE.update_applied = True
+                    verb = "Reverted" if res.get("reverted") else "Switched"
+                    STATE.update_lines.append(
+                        f"✔ {verb} to v{res['version']} — reloading LISA to finish (no manual "
+                        "restart needed) …")
+            except Exception as e:
+                STATE.update_lines.append(f"revert error: {e}")
+            finally:
+                STATE.update_running = False
+        threading.Thread(target=_r, daemon=True).start()
+        return True
+
     def restart_app(self):
         """Relaunch LISA in a FRESH process (so just-updated code actually loads) and close this
         window — so an Update finishes without the user manually quitting + reopening. New code

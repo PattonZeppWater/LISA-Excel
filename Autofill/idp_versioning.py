@@ -190,6 +190,59 @@ def _copy_over(src, dst, log):
     return count
 
 
+def _versions_in(folder):
+    """Every N among `vN` subfolders of `folder`, as ints. Parsed with int() and sorted
+    NUMERICALLY (v10 > v9 > v2) — never lexically — so the Revert list can't mis-order."""
+    out = []
+    try:
+        for n in os.listdir(folder):
+            if (n[:1].lower() == "v" and n[1:].isdigit()
+                    and os.path.isdir(os.path.join(folder, n))):
+                out.append(int(n[1:]))
+    except Exception:
+        return []
+    return sorted(out)   # ascending, numeric
+
+
+def list_versions(pull_dir=None):
+    """Versions available to roll to, from the shared pull folder. Returns
+    {versions:[ints, NEWEST FIRST], current, latest, reachable, path}. Numeric sort throughout."""
+    pd = (pull_dir or "").strip().strip('"')
+    reachable = bool(pd) and os.path.isdir(pd)
+    vs = _versions_in(pd) if reachable else []
+    versions = sorted(vs, reverse=True)   # newest first, numeric
+    cur = current_version()
+    return {"versions": versions, "current": cur,
+            "latest": (versions[0] if versions else cur),
+            "reachable": reachable, "path": pd}
+
+
+def apply_version(pull_dir, target, log=lambda *a: None):
+    """Roll THIS install to a SPECIFIC published version `target` (an OLDER one = a revert, or any
+    other). Copies that version's files over the local fused folder and sets the local version to
+    `target`. Same file scope + additive semantics as apply_update (source/data/dist only; never
+    .venv/node_modules). Applied fully on restart. Returns a result dict."""
+    pd = (pull_dir or "").strip().strip('"')
+    if not pd or not os.path.isdir(pd):
+        return {"ok": False, "error": "version folder not reachable: %r" % pd}
+    try:
+        target = int(target)
+    except (TypeError, ValueError):
+        return {"ok": False, "error": "invalid version: %r" % (target,)}
+    src = os.path.join(pd, "v%d" % target)
+    if not os.path.isdir(src):
+        return {"ok": False, "error": "v%d not found in %s" % (target, pd)}
+    cur = current_version()
+    if target == cur:
+        return {"ok": True, "changed": False, "version": cur, "note": "Already on v%d." % cur}
+    reverting = target < cur
+    log("%s v%d -> v%d from %s ..." % ("Reverting" if reverting else "Switching", cur, target, pd))
+    n = _copy_over(src, fused_root(), log)
+    _set_current_version(target)
+    log("Applied %d file(s). Restart LISA to load v%d." % (n, target))
+    return {"ok": True, "changed": True, "version": target, "files": n, "reverted": reverting}
+
+
 def apply_update(pull_dir, log=lambda *a: None):
     """Copy the latest published version's files from `pull_dir` over the local fused folder
     (source/data/dist only). Applied fully on restart. Returns a result dict."""

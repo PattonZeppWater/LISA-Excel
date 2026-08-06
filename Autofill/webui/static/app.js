@@ -105,15 +105,33 @@ function renderUpdate(r) {
 async function checkUpdate() {
   const a = api(); if (!a || !a.check_update) return;
   try { renderUpdate(await a.check_update((val('update_path') || '').trim())); } catch (e) {}
+  revertRefresh();
 }
+// Populate the Revert dropdown from the shared folder (numeric order, newest first — the backend
+// sorts numerically so v10 sorts above v9). Hidden entirely when no shared versions are reachable.
+async function revertRefresh() {
+  const a = api(); if (!a || !a.list_versions) return;
+  let r; try { r = await a.list_versions((val('update_path') || '').trim()); } catch (e) { return; }
+  const sel = document.getElementById('revert_select');
+  const bar = document.getElementById('revert_bar');
+  if (!sel || !bar) return;
+  const vers = (r && r.versions) || [];
+  if (!vers.length) { bar.style.display = 'none'; return; }
+  bar.style.display = '';
+  sel.innerHTML = '';
+  vers.forEach(v => {
+    const o = document.createElement('option');
+    o.value = String(v);
+    o.textContent = 'v' + v + (v === r.current ? ' (current)' : '') + (v === r.latest ? ' — latest' : '');
+    if (v === r.current) o.selected = true;
+    sel.appendChild(o);
+  });
+}
+// One poll loop shared by Update AND Revert: stream the log, and when the op finishes and a new
+// version was applied, auto-reload LISA (single restart path — no divergence between the two).
 let updTimer = null;
-async function runUpdate() {
-  const a = api(); if (!a || !a.run_update) return;
-  const p = (val('update_path') || '').trim();
-  const btn = document.getElementById('btn_update'); const st = document.getElementById('update_status');
-  if (btn) btn.disabled = true;
-  if (st) { st.textContent = 'Updating…'; st.className = 'update-txt busy'; }
-  await a.run_update(p);
+function startVersionPoll() {
+  const a = api();
   if (updTimer) return;
   updTimer = setInterval(async () => {
     const s = await a.poll_update();
@@ -123,8 +141,6 @@ async function runUpdate() {
     if (!s.running) {
       clearInterval(updTimer); updTimer = null;
       if (s.applied && a.restart_app) {
-        // a newer version was copied in — relaunch LISA automatically so the new code loads
-        // without the user manually closing + reopening.
         const st2 = document.getElementById('update_status');
         if (st2) { st2.textContent = 'Reloading LISA…'; st2.className = 'update-txt busy'; }
         setTimeout(() => { a.restart_app(); }, 1200);
@@ -133,6 +149,29 @@ async function runUpdate() {
       }
     }
   }, 700);
+}
+async function runUpdate() {
+  const a = api(); if (!a || !a.run_update) return;
+  const p = (val('update_path') || '').trim();
+  const btn = document.getElementById('btn_update'); const st = document.getElementById('update_status');
+  if (btn) btn.disabled = true;
+  if (st) { st.textContent = 'Updating…'; st.className = 'update-txt busy'; }
+  await a.run_update(p);
+  startVersionPoll();
+}
+async function runRevert() {
+  const a = api(); if (!a || !a.run_revert) return;
+  const sel = document.getElementById('revert_select');
+  if (!sel || !sel.value) return;
+  const target = parseInt(sel.value, 10);
+  if (!(target >= 0)) return;
+  const label = 'v' + target;
+  if (!confirm(`Roll this computer to ${label}?\n\nThis replaces the current app files with that version and reloads LISA automatically. You can move back to the latest anytime with Update.`)) return;
+  const btn = document.getElementById('btn_revert'); const st = document.getElementById('update_status');
+  if (btn) btn.disabled = true;
+  if (st) { st.textContent = 'Reverting…'; st.className = 'update-txt busy'; }
+  await a.run_revert(target, (val('update_path') || '').trim());
+  startVersionPoll();
 }
 // version-control folder pickers + persistence (hero path + training path)
 async function pickVersionDir(which) {
