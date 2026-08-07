@@ -49,6 +49,12 @@
 .key-hint.key-ok { color: #00e6b3; }
 .update-bar { display: flex; align-items: center; gap: .5rem; margin-top: 1rem; flex-wrap: wrap; max-width: 640px; }
 .version-pick { max-width: 240px; }
+
+/* custom instant tooltip (surfaces each control's title text — see app.js) */
+.ui-tip { position: fixed; z-index: 9999; display: none; max-width: 300px; padding: .4rem .6rem;
+          background: #0b1622; color: #e2eaf4; border: 1px solid #2a5a8a; border-radius: 6px;
+          font-size: .76rem; line-height: 1.4; white-space: normal; pointer-events: none;
+          box-shadow: 0 6px 20px rgba(0, 0, 0, .45); }
 .update-bar .update-path { flex: 1; min-width: 240px; font-size: .82rem; padding: .45rem .6rem; }
 .update-btn { background: linear-gradient(90deg, #00c9ff, #00e6b3); color: #06101e; border: none; padding: .5rem 1.2rem; border-radius: 7px; font-weight: 800; cursor: pointer; letter-spacing: .01em; transition: filter .15s, box-shadow .2s; }
 .update-btn:hover:not(:disabled) { filter: brightness(1.08); box-shadow: 0 0 18px #00e6b355; }
@@ -161,3 +167,4 @@ tr.row-manual td:first-child { box-shadow: inset 3px 0 0 #e6a817; }
 :root[data-theme="light"] .pill { background: #eef3f9; color: #4a6b8a; border-color: #c9d8e8; }
 :root[data-theme="light"] .pill:hover { color: #14293e; border-color: #a9c2da; }
 :root[data-theme="light"] .pill.active { background: #dce9f6; color: #14293e; border-color: #2f7fb8; }
+:root[data-theme="light"] .ui-tip { background: #ffffff; color: #14293e; border-color: #a9c2da; box-shadow: 0 6px 20px rgba(20, 41, 62, .15); }

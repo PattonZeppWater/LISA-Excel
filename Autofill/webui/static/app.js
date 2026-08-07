@@ -586,3 +586,47 @@ async function loadRecentProject(folder) {
 window.addEventListener('pywebviewready', initSettings);
 if (document.readyState !== 'loading') initSettings();
 else document.addEventListener('DOMContentLoaded', initSettings);
+
+// ── Tooltips on every control ────────────────────────────────────────────────
+// Every button/select already carries a descriptive `title`; the native tooltip is slow and
+// renders inconsistently in the embedded WebView, so surface those titles as an instant, styled,
+// theme-aware tooltip instead. Event-delegated, so dynamically-added controls (logic-row trash,
+// file-remove ✕, recent-project chips) are covered automatically. On first hover the element's
+// `title` is moved to `data-tip` (and the native title removed) so a duplicate tooltip never shows.
+(function () {
+  const SEL = 'button, select, .fx, .trash, .recent-chip, .pill, [data-tip]';
+  let tip = null, hideTimer = null;
+  function el() {
+    if (!tip) { tip = document.createElement('div'); tip.className = 'ui-tip'; tip.setAttribute('role', 'tooltip'); document.body.appendChild(tip); }
+    return tip;
+  }
+  function textFor(t) {
+    let s = t.getAttribute('data-tip');
+    if (s == null) {
+      const nat = t.getAttribute('title');
+      if (nat) { s = nat; t.setAttribute('data-tip', nat); t.removeAttribute('title'); }  // kill native dup
+    }
+    return s;
+  }
+  function show(t) {
+    const s = textFor(t);
+    if (!s) return;
+    const e = el(); e.textContent = s; e.style.display = 'block';
+    const r = t.getBoundingClientRect(), b = e.getBoundingClientRect();
+    let top = r.top - b.height - 8;
+    if (top < 4) top = r.bottom + 8;                                  // flip below if no room above
+    let left = r.left + r.width / 2 - b.width / 2;
+    left = Math.max(6, Math.min(left, window.innerWidth - b.width - 6));
+    e.style.top = top + 'px'; e.style.left = left + 'px';
+  }
+  function hide() { if (tip) tip.style.display = 'none'; }
+  document.addEventListener('mouseover', ev => {
+    const t = ev.target.closest && ev.target.closest(SEL);
+    if (t) { clearTimeout(hideTimer); show(t); }
+  });
+  document.addEventListener('mouseout', ev => {
+    if (ev.target.closest && ev.target.closest(SEL)) { clearTimeout(hideTimer); hideTimer = setTimeout(hide, 60); }
+  });
+  document.addEventListener('click', hide, true);
+  window.addEventListener('scroll', hide, true);
+})();
