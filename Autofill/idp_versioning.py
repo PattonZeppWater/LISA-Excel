@@ -204,13 +204,37 @@ def _versions_in(folder):
     return sorted(out)   # ascending, numeric
 
 
+def _update_ok_in(folder, n):
+    """True only if version vN's snapshot has a PROPERLY-WORKING Update button — the full
+    update + auto-reload flow (run_update + check_update + restart_app on the backend, and the
+    Update button wired to runUpdate + the restart_app call on the front-end). Older versions
+    that can copy files but never auto-reload (no restart_app) are treated as NOT working and are
+    hidden from the version picker, so a user can never roll onto a version they can't cleanly
+    Update back out of. Best-effort: unreadable/malformed snapshots are excluded (safer)."""
+    base = os.path.join(folder, "v%d" % n, "Autofill")
+
+    def has(rel, *needles):
+        try:
+            with open(os.path.join(base, *rel), "r", encoding="utf-8", errors="ignore") as fh:
+                s = fh.read()
+            return all(x in s for x in needles)
+        except Exception:
+            return False
+
+    return (has(("idp_web_panel.py",), "def run_update", "def check_update", "def restart_app")
+            and has(("webui", "static", "app.js"), "runUpdate", "restart_app")
+            and has(("webui", "templates", "index.html"), "btn_update"))
+
+
 def list_versions(pull_dir=None):
-    """Versions available to roll to, from the shared pull folder. Returns
-    {versions:[ints, NEWEST FIRST], current, latest, reachable, path}. Numeric sort throughout."""
+    """Versions available to roll to, from the shared pull folder — LIMITED to versions whose
+    Update button works properly (see _update_ok_in), so the picker never strands you on a version
+    you can't Update back out of. Returns {versions:[ints, NEWEST FIRST], current, latest,
+    reachable, path}. Numeric sort throughout."""
     pd = (pull_dir or "").strip().strip('"')
     reachable = bool(pd) and os.path.isdir(pd)
     vs = _versions_in(pd) if reachable else []
-    versions = sorted(vs, reverse=True)   # newest first, numeric
+    versions = sorted([n for n in vs if _update_ok_in(pd, n)], reverse=True)  # only working ones
     cur = current_version()
     return {"versions": versions, "current": cur,
             "latest": (versions[0] if versions else cur),
