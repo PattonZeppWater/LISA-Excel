@@ -21,11 +21,129 @@ Sheets written:
 
 import os
 import re
-import sys
 import shutil
 import warnings
+import zipfile as _zipfile
 
 warnings.filterwarnings("ignore")
+
+
+# ── Preserve the workbook's "x14" (extension-list) data validations ──────────────────────────
+# openpyxl SILENTLY DROPS every data validation stored in a sheet's <extLst> — the "x14"
+# validations Excel uses for LIST dropdowns that reference ANOTHER sheet (the S/D Conduit picker
+# `ConduitIndex!$A$2:$A$100`, and the Ref Documents / Deviation Notes / Document Manager lists).
+# Standard SAME-sheet validations (Type, Color, and the INDIRECT symbol dropdowns) survive the
+# load+save, but the cross-sheet ones vanish — which is why "every dropdown except the symbols"
+# broke after a scan. We only write VALUES into existing rows (the validated ranges never move),
+# so the template's x14 blocks are still exactly correct for the output. These helpers re-inject
+# them, verbatim, into the saved workbook via a light zip edit (no openpyxl involved).
+_X14_DV_URI = "{CCE6A557-97BC-4b89-ADB6-D9C93CAAB3DF}"   # the data-validation ext uri
+
+
+def _xml_escape(s):
+    return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _sheet_name_to_part(z):
+    """{sheet name -> 'xl/worksheets/sheetN.xml'} for a workbook zip, tolerant of relative
+    ('worksheets/…') and absolute ('/xl/worksheets/…') relationship targets."""
+    wbx = z.read("xl/workbook.xml").decode("utf-8", "replace")
+    rels = z.read("xl/_rels/workbook.xml.rels").decode("utf-8", "replace")
+    relmap = {}
+    for tag in re.findall(r"<Relationship\b[^>]*/>", rels):
+        i = re.search(r'Id="([^"]+)"', tag)
+        t = re.search(r'Target="([^"]+)"', tag)
+        if i and t:
+            tg = t.group(1).lstrip("/")
+            relmap[i.group(1)] = tg if tg.startswith("xl/") else "xl/" + tg
+    out = {}
+    for tag in re.findall(r"<sheet\b[^>]*/>", wbx):
+        nm = re.search(r'name="([^"]+)"', tag)
+        rid = re.search(r'r:id="([^"]+)"', tag)
+        if nm and rid and rid.group(1) in relmap:
+            out[nm.group(1)] = relmap[rid.group(1)]
+    return out
+
+
+def _extract_x14_ext(sheet_xml):
+    """The data-validation <ext …> block from a sheet's <extLst>, or '' if none. xr:uid attrs
+    are stripped so the block is self-contained (the <ext>/<x14:dataValidations> carry their own
+    xmlns:x14 / xmlns:xm, so no namespace need be declared on the openpyxl-written worksheet root)."""
+    m = re.search(r"<ext\b(?:(?!</ext>).)*?<x14:dataValidations\b.*?</ext>", sheet_xml, re.S)
+    if not m:
+        return ""
+    return re.sub(r'\s+xr:uid="[^"]*"', "", m.group(0))
+
+
+def _inject_x14_ext(sheet_xml, ext):
+    """Return sheet_xml with `ext` placed inside the worksheet-level <extLst> (creating one just
+    before </worksheet> if absent). No-op if this sheet already carries a data-validation ext."""
+    if not ext or _X14_DV_URI in sheet_xml:
+        return sheet_xml
+    end = sheet_xml.rfind("</worksheet>")
+    if end == -1:
+        return sheet_xml
+    close = sheet_xml.rfind("</extLst>", 0, end)
+    if close != -1 and sheet_xml[close + len("</extLst>"):end].strip() == "":
+        return sheet_xml[:close] + ext + sheet_xml[close:]   # into the trailing worksheet extLst
+    return sheet_xml[:end] + "<extLst>" + ext + "</extLst>" + sheet_xml[end:]
+
+
+def _x14_ext_by_sheet(path, renames=None):
+    """{sheet name -> its x14 data-validation <ext> XML} for a workbook zip. Sheet-name
+    references inside the blocks are rewritten per `renames` (e.g. the Ref-Documents sheet rename
+    idp_write applies to the OUTPUT copy), so a re-injected reference never points at a stale name."""
+    out = {}
+    try:
+        with _zipfile.ZipFile(path) as z:
+            for name, part in _sheet_name_to_part(z).items():
+                try:
+                    ext = _extract_x14_ext(z.read(part).decode("utf-8", "replace"))
+                except Exception:
+                    ext = ""
+                if not ext:
+                    continue
+                for old, new in (renames or {}).items():
+                    ext = ext.replace("'%s'" % old, "'%s'" % new)
+                    ext = ext.replace("'%s'" % _xml_escape(old), "'%s'" % _xml_escape(new))
+                out[name] = ext
+    except Exception:
+        return {}
+    return out
+
+
+def _apply_x14_ext_by_sheet(out_path, ext_by_name):
+    """Inject per-sheet x14 <ext> blocks into a saved workbook via a light zip rewrite (every
+    other part copied byte-for-byte, so VBA/macros and formatting are untouched). Best-effort:
+    any failure leaves the file exactly as it was saved. Returns the number of sheets restored."""
+    if not ext_by_name:
+        return 0
+    try:
+        with _zipfile.ZipFile(out_path) as zo:
+            oparts = _sheet_name_to_part(zo)
+            names = zo.namelist()
+            infos = {i.filename: i for i in zo.infolist()}
+            data = {n: zo.read(n) for n in names}
+        restored = 0
+        for name, ext in ext_by_name.items():
+            part = oparts.get(name)
+            if not part or part not in data:
+                continue
+            xml = data[part].decode("utf-8", "replace")
+            new = _inject_x14_ext(xml, ext)
+            if new != xml:
+                data[part] = new.encode("utf-8")
+                restored += 1
+        if not restored:
+            return 0
+        tmp = out_path + ".x14tmp"
+        with _zipfile.ZipFile(tmp, "w", _zipfile.ZIP_DEFLATED) as zw:
+            for n in names:
+                zw.writestr(infos[n], data[n])   # infos[n] keeps each part's original compression
+        os.replace(tmp, out_path)
+        return restored
+    except Exception:
+        return 0
 
 
 def versioned_path(path):
@@ -184,6 +302,9 @@ def _sanitize_formula_leaks(ws, start_row, end_row, ncols, formula_cols=()):
 
 def degrey(in_path, out_path=None):
     """Strip the grey-out (FF808080) fills. Returns count of de-greyed cells."""
+    # capture the x14 cross-sheet dropdowns from the source (which already has them, with the
+    # Ref-Documents rename applied) BEFORE the openpyxl round-trip strips them again.
+    _x14 = _x14_ext_by_sheet(in_path)
     wb = openpyxl.load_workbook(in_path, keep_vba=True)
     nofill = PatternFill(fill_type=None)
     n = 0
@@ -194,108 +315,76 @@ def degrey(in_path, out_path=None):
                 if f and f.patternType == "solid" and str(getattr(f.fgColor, "rgb", "")) == "FF808080":
                     c.fill = nofill
                     n += 1
-    wb.save(out_path or in_path)
+    dst = out_path or in_path
+    wb.save(dst)
+    _apply_x14_ext_by_sheet(dst, _x14)   # restore cross-sheet dropdowns openpyxl stripped
     return n
 
 
-def _com_finalize(path, flag_log=None):
-    """Open the written workbook in Excel and let the workbook's OWN macros
-    rebuild the per-row data-validation dropdowns and the grey-out, then re-save
-    through Excel. Returns True on success, False if it was skipped/failed.
+def bake_greying(xlsm_path, log=None):
+    """Bake the FillIndex "not-applicable → grey" formatting into the DELIVERED workbook.
 
-    WHY THIS EXISTS: openpyxl (the value writer above) cannot round-trip this
-    .xlsm without loss. It emits "Data Validation extension is not supported and
-    will be removed" and drops every x14 (extension-list) dropdown — the modern
-    dropdowns on ConduitIndex/FillIndex whose source is a named range on another
-    sheet. And because it writes OUTSIDE Excel, the workbook's Worksheet_Change
-    macros never fire, so the rows it writes are never greyed and their dropdowns
-    are never built. The result is exactly the reported bug: a "broken" workbook
-    missing its greying and some of its dropdowns.
+    The greying is a VBA feature (Sheet2.Worksheet_Change) that only fires on a MANUAL edit, so
+    openpyxl-written rows open ungreyed until the user pokes a dropdown. This opens the finished
+    workbook in Excel WITH MACROS ENABLED — AutomationSecurity=msoAutomationSecurityLow runs them
+    without the "Enable Content" prompt (the programmatic equivalent of pressing Enable) — runs the
+    workbook's own `PZ_ForceRebuild` (which re-formats every filled row exactly as a manual edit
+    would), and saves. The grey is then baked in as static fills, so it shows correctly even before
+    the user enables macros. Uses the workbook's OWN macro, so it can never diverge from the tool.
 
-    Excel + the workbook's own routines regenerate both from the values already
-    written: FillIndex.PZ_ForceRebuild (grey-out + per-row S Symbol / Color / Tag
-    validation) and ConduitIndex.CI_EnsureValidations (Type / Ref Doc / Deviations
-    dropdowns). Saving through Excel keeps the VBA project, conditional formatting,
-    and all validations native — nothing is "not supported".
-
-    Graceful no-op when pywin32 / Excel is unavailable (e.g. a headless CI box):
-    the openpyxl file is left as-is (lossy but present) instead of erroring, and a
-    one-line reason is written to stderr so the loss is never silent.
-    """
+    Best-effort and fully isolated: runs a PRIVATE Excel instance, and if Excel / pywin32 isn't
+    available or anything fails, the workbook is left exactly as written (ungreyed but intact) and
+    the scan is never interrupted. Returns True only if the macro ran and the file was saved."""
+    _log = log or (lambda *a, **k: None)
     try:
         import pythoncom
-        import win32com.client
-    except ImportError:
-        print("idp_write: pywin32/Excel unavailable — skipped the Excel finalize; "
-              "the output's dropdowns and grey-out will be missing.", file=sys.stderr)
+        import win32com.client as _w32
+    except Exception:
+        _log("Greying: Excel automation (pywin32) unavailable — workbook delivered ungreyed "
+             "(open it and enable macros, or edit any dropdown, to grey it).")
         return False
-
+    xl = None
+    ran = False
     pythoncom.CoInitialize()
-    excel = None
     try:
-        excel = win32com.client.DispatchEx("Excel.Application")
-        excel.Visible = False
-        excel.DisplayAlerts = False
-        # Enable macros on open WITHOUT a prompt. The default (msoAutomationSecurityByUI)
-        # honors the Trust Center's "disable macros" UI setting, so Application.Run below
-        # fails with "all macros may be disabled". msoAutomationSecurityLow (=1) enables
-        # them for this automation session only (does not change the user's settings).
+        xl = _w32.DispatchEx("Excel.Application")     # a private instance, not the user's Excel
+        xl.Visible = False
+        xl.DisplayAlerts = False
+        xl.ScreenUpdating = False
+        xl.AskToUpdateLinks = False
         try:
-            excel.AutomationSecurity = 1
+            xl.AutomationSecurity = 1                  # msoAutomationSecurityLow -> macros ON, no prompt
         except Exception:
             pass
-        excel.EnableEvents = False          # don't fire Workbook_Open / per-cell Change
-        wb = excel.Workbooks.Open(os.path.abspath(path), UpdateLinks=0)
+        wb = xl.Workbooks.Open(os.path.abspath(xlsm_path), UpdateLinks=0, ReadOnly=False)
         try:
-            # Rebuild dropdowns + grey-out from the values just written. Address the
-            # sheet-module routines by each sheet's LIVE VBA CodeName (robust to any
-            # sheet-name / code-name drift), and isolate each so one failing still
-            # lets the other run. If Run can't resolve the sheet-module proc, fall
-            # back to "nudging" a structural cell with events ON so Worksheet_Change
-            # fires the same rebuild.
-            for sheet_name, proc, nudge_col in (("FillIndex", "PZ_ForceRebuild", FI_TYPE),
-                                                ("ConduitIndex", "CI_EnsureValidations", CI_TYPE)):
-                ws = wb.Worksheets(sheet_name)
+            for macro in ("Sheet2.PZ_ForceRebuild",
+                          "'%s'!Sheet2.PZ_ForceRebuild" % wb.Name,
+                          "PZ_ForceRebuild"):
                 try:
-                    excel.Run(ws.CodeName + "." + proc)
-                except Exception as e:               # noqa: BLE001 — best-effort per sheet
-                    print(f"idp_write: '{proc}' on {sheet_name} did not run directly "
-                          f"({e}); trying a Worksheet_Change nudge.", file=sys.stderr)
-                    try:
-                        excel.EnableEvents = True
-                        data_row = 3 if sheet_name == "FillIndex" else 2
-                        cell = ws.Cells(data_row, nudge_col)
-                        cell.Value = cell.Value      # re-write triggers Worksheet_Change
-                    except Exception as e2:          # noqa: BLE001
-                        print(f"idp_write: nudge rebuild on {sheet_name} also failed "
-                              f"({e2}).", file=sys.stderr)
-                    finally:
-                        excel.EnableEvents = False
-            # Re-assert the amber review highlights. The grey-out rebuild repaints
-            # cell interiors and can clear the FFF2CC flag fill; the review COMMENTS
-            # were written by openpyxl and the macros don't touch them, so only the
-            # fill needs restoring. Excel Interior.Color is a BGR OLE color.
-            if flag_log:
-                amber = 255 + 242 * 256 + 204 * 65536   # openpyxl FFF2CC -> BGR
-                for title, row, col in flag_log:
-                    try:
-                        wb.Worksheets(title).Cells(row, col).Interior.Color = amber
-                    except Exception:
-                        pass
+                    xl.Run(macro)
+                    ran = True
+                    break
+                except Exception:
+                    continue
             wb.Save()
         finally:
-            wb.Close(SaveChanges=False)             # already saved above
-        return True
-    except Exception as e:                          # noqa: BLE001 — never fail the write
-        print(f"idp_write: Excel finalize failed ({e}). The file was still written "
-              f"by openpyxl, but its dropdowns and grey-out are missing.", file=sys.stderr)
+            wb.Close(SaveChanges=False)
+        if ran:
+            _log("Greying: applied via the workbook's own Excel macro (PZ_ForceRebuild) — the "
+                 "delivered file is greyed on open, no need to enable macros or touch a dropdown.")
+        else:
+            _log("Greying: macro not found; workbook saved unchanged (ungreyed).")
+        return ran
+    except Exception as e:
+        _log("Greying: skipped — Excel automation failed (%s); workbook delivered ungreyed." % e)
         return False
     finally:
-        if excel is not None:
-            try:
-                excel.Quit()
-            except Exception:
-                pass
+        try:
+            if xl is not None:
+                xl.Quit()
+        except Exception:
+            pass
         try:
             pythoncom.CoUninitialize()
         except Exception:
@@ -303,8 +392,7 @@ def _com_finalize(path, flag_log=None):
 
 
 def write_workbook(records, template_path, out_path, clear_rows=True, add_flags=True,
-                   lisa_gate=True, anatomy=True, schedule_doc=None, clear_deviations=False,
-                   finalize=True):
+                   lisa_gate=True, anatomy=True, schedule_doc=None, clear_deviations=False):
     _schedule_doc = schedule_doc
     check_template_sane(template_path)   # never build on top of a prior output
     # LISA-readiness gate: remap raw conductor counts to legal connection counts
@@ -400,18 +488,8 @@ def write_workbook(records, template_path, out_path, clear_rows=True, add_flags=
     rd = wb["Ref Documents & Deviations"]
     fi = wb["FillIndex"]
 
-    # honor the add_flags option: no-op the flagger when disabled. When enabled,
-    # also record (sheet, row, col) of every flagged cell so _com_finalize can
-    # re-assert the amber highlight after the macro grey-out rebuild (which would
-    # otherwise repaint over it). Only ConduitIndex/FillIndex ever get flagged.
-    flag_log = []
-    if add_flags:
-        def flag(ws, row, col, msg):
-            _flag_cell(ws, row, col, msg)
-            flag_log.append((ws.title, row, col))
-    else:
-        def flag(*a, **k):
-            return None
+    # honor the add_flags option: no-op the flagger when disabled
+    flag = _flag_cell if add_flags else (lambda *a, **k: None)
 
     # Capture the per-row Wire Label TEXTJOIN formulas from the first data row so
     # we can re-apply them (row-translated) to each row we write — computed labels
@@ -707,8 +785,10 @@ def write_workbook(records, template_path, out_path, clear_rows=True, add_flags=
     # (template untouched) so LISA reads both ref docs and deviation notes. Re-point the
     # one defined name (RefDoc_List dropdown source) so the workbook stays self-consistent.
     _OLD_RD, _NEW_RD = "Ref Documents & Deviations", "Ref Documents"
+    _renamed = {}
     if _OLD_RD in wb.sheetnames and _NEW_RD not in wb.sheetnames:
         wb[_OLD_RD].title = _NEW_RD
+        _renamed[_OLD_RD] = _NEW_RD
         try:
             dn = wb.defined_names.get("RefDoc_List")
             if dn is not None and _OLD_RD in str(dn.value):
@@ -716,13 +796,9 @@ def write_workbook(records, template_path, out_path, clear_rows=True, add_flags=
         except Exception:
             pass
 
+    # capture the template's cross-sheet (x14) dropdowns BEFORE saving — openpyxl's save() drops
+    # them — then re-inject them into the saved file (rewriting the renamed Ref-Documents ref).
+    _x14 = _x14_ext_by_sheet(template_path, renames=_renamed)
     wb.save(out_path)
-
-    # openpyxl just stripped the x14 dropdowns and wrote every value outside of
-    # Excel, so the grey-out and per-row dropdowns are absent. Hand the file to
-    # Excel so the workbook's own macros rebuild both from the values written.
-    # Best-effort: a failure here leaves the (lossy) openpyxl file rather than
-    # erroring the whole extraction.
-    if finalize:
-        _com_finalize(out_path, flag_log)
+    _apply_x14_ext_by_sheet(out_path, _x14)   # restore cross-sheet dropdowns openpyxl stripped
     return out_path
