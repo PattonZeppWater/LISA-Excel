@@ -292,6 +292,52 @@ def _pt(x: float, y: float, z: float = 0.0):
 # another is mid-clear).  Serialize all generation through this lock.
 _GEN_LOCK = threading.Lock()
 
+# ── Dedicated COM thread ────────────────────────────────────────────────────────
+# LISA's Flask server runs threaded (so the Autofill panel's long file scans don't freeze the
+# whole UI). But AutoCAD automation is COM, apartment-threaded (STA): a Werkzeug worker thread
+# never calls CoInitialize, so running generation directly on it fails with
+# "CoInitialize has not been called" -- AND the reuse engine's cached open doc is apartment-
+# affine, so it can't be reused from a different worker thread either. Fix: run EVERY AutoCAD
+# call on ONE dedicated thread that CoInitializes exactly once. Generation is then always on a
+# valid COM apartment (correct) and the reuse doc survives across requests (speed preserved),
+# while every OTHER request -- Autofill, parse, health -- keeps running on its own Flask worker
+# thread, so the two tools coexist without touching each other.
+import concurrent.futures
+
+_COM_THREAD_PREFIX = "lisa-com"
+
+def _com_worker_init():
+    try:
+        pythoncom.CoInitialize()
+    except Exception:
+        pass
+
+_COM_POOL = concurrent.futures.ThreadPoolExecutor(
+    max_workers=1, thread_name_prefix=_COM_THREAD_PREFIX, initializer=_com_worker_init)
+
+def _on_com_thread() -> bool:
+    """True if we're already ON the dedicated COM thread (so we call directly, not re-submit)."""
+    return threading.current_thread().name.startswith(_COM_THREAD_PREFIX)
+
+def run_on_com_thread(fn, *args, **kwargs):
+    """Run fn on the ONE dedicated CoInitialized STA thread and return its result (re-raising any
+    exception on the caller). If already on that thread, run inline to avoid a self-deadlock."""
+    if _on_com_thread():
+        return fn(*args, **kwargs)
+    return _COM_POOL.submit(fn, *args, **kwargs).result()
+
+
+def autocad_status() -> dict:
+    """{'running': bool, 'version': str|None} -- the AutoCAD status check, run on the COM thread
+    so it works under the threaded server (a raw worker-thread GetActiveObject would fail)."""
+    def _check():
+        try:
+            acad = win32com.client.GetActiveObject("AutoCAD.Application")
+            return {"running": True, "version": str(acad.Version)}
+        except Exception:
+            return {"running": False, "version": None}
+    return run_on_com_thread(_check)
+
 # How many times to retry a COM call AutoCAD rejected because it's busy (mid-command, or the
 # moment a dialog is closing). Tuned for speed: 15 tries x ~1s = ~15s window (was 20 x 2s =
 # ~40s). Enough to ride out the brief busy window between sheets on a single idle AutoCAD;
@@ -469,6 +515,11 @@ def generate_dwg(*args, **kwargs) -> dict:
     across every sheet -- render/save/UNDO-reset instead of copy+open+clear per sheet (~17s/sheet
     saved). It is tried FIRST; ANY failure or anomaly falls straight through to the proven
     fresh-open path below, so the reuse path can never make output worse than the default."""
+    # Always run the actual AutoCAD work on the one dedicated CoInitialized COM thread -- the
+    # Flask worker thread that called us has no COM apartment (threaded server), and the reuse
+    # doc is apartment-affine. See run_on_com_thread.
+    if not _on_com_thread():
+        return run_on_com_thread(generate_dwg, *args, **kwargs)
     with _GEN_LOCK:
         if _reuse_enabled():
             try:
@@ -1768,6 +1819,8 @@ def fill_general_titleblocks(items: list, project_desc: dict | None = None) -> l
     in the running AutoCAD, write the project lines + DRAWING_NO + SHEET (leaving SECTION =
     'GENERAL' and the DESC label from the template untouched), save and close. Best-effort:
     returns a list of warning strings and never raises."""
+    if not _on_com_thread():   # run AutoCAD work on the dedicated COM thread (threaded server)
+        return run_on_com_thread(fill_general_titleblocks, items, project_desc)
     warnings = []
     items = [it for it in (items or []) if it and it[0] and os.path.exists(it[0])]
     if not items:
@@ -1933,6 +1986,8 @@ def populate_drawing_index(index_pages: list, project_desc: dict | None = None) 
     DRAWING_NO + SHEET, leaving DESC1='DRAWING INDEX' / SECTION='GENERAL' from the template),
     fill its AcDbTable with that page's row slice, save and close. One AutoCAD connection is
     reused across all pages. Best-effort: returns a list of warning strings, never raises."""
+    if not _on_com_thread():   # run AutoCAD work on the dedicated COM thread (threaded server)
+        return run_on_com_thread(populate_drawing_index, index_pages, project_desc)
     warnings = []
     pages = [p for p in (index_pages or []) if p and p.get("path") and os.path.exists(p["path"])]
     if not pages:
