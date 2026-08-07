@@ -168,3 +168,36 @@ tr.row-manual td:first-child { box-shadow: inset 3px 0 0 #e6a817; }
 :root[data-theme="light"] .pill:hover { color: #14293e; border-color: #a9c2da; }
 :root[data-theme="light"] .pill.active { background: #dce9f6; color: #14293e; border-color: #2f7fb8; }
 :root[data-theme="light"] .ui-tip { background: #ffffff; color: #14293e; border-color: #a9c2da; box-shadow: 0 6px 20px rgba(20, 41, 62, .15); }
+
+/* ── visual polish (additive only — no structure or behavior changes) ─────────── */
+/* depth + smooth transitions on cards */
+.card { box-shadow: 0 1px 3px rgba(0, 0, 0, .18); transition: border-color .15s, box-shadow .15s; }
+/* consistent focus ring on text inputs + selects */
+.txt, .sel { transition: border-color .15s, box-shadow .15s; }
+.txt:focus, .sel:focus { outline: none; border-color: #4a9fd4; box-shadow: 0 0 0 3px rgba(74, 159, 212, .18); }
+/* smoother buttons + a keyboard focus outline (accessibility) */
+.btn-primary { transition: background .15s, border-color .15s, box-shadow .15s; }
+.btn-primary:hover:not(:disabled) { border-color: #3a6fa0; }
+:where(.btn-primary, .pill, .run-btn, .cancel-btn, .update-btn, .version-pick, .fx, .trash):focus-visible {
+  outline: 2px solid #4a9fd4; outline-offset: 2px; border-radius: 6px; }
+/* table header fill + smooth row transitions */
+.tbl th { background: #0c1c2e; }
+.tbl td, .tbl th { transition: background .12s; }
+/* thin, themed scrollbars on the scrollable panes */
+.file-list::-webkit-scrollbar, .log::-webkit-scrollbar { width: 9px; }
+.file-list::-webkit-scrollbar-track, .log::-webkit-scrollbar-track { background: transparent; }
+.file-list::-webkit-scrollbar-thumb, .log::-webkit-scrollbar-thumb {
+  background: #24405c; border-radius: 6px; border: 2px solid transparent; background-clip: content-box; }
+.file-list::-webkit-scrollbar-thumb:hover, .log::-webkit-scrollbar-thumb:hover {
+  background: #315a80; background-clip: content-box; }
+
+/* light-mode polish */
+:root[data-theme="light"] .card { box-shadow: 0 1px 3px rgba(20, 41, 62, .08); }
+:root[data-theme="light"] .txt:focus, :root[data-theme="light"] .sel:focus {
+  border-color: #2f7fb8; box-shadow: 0 0 0 3px rgba(47, 127, 184, .15); }
+:root[data-theme="light"] .btn-primary:hover:not(:disabled) { border-color: #7fa6cc; }
+:root[data-theme="light"] .tbl th { background: #eef3f9; }
+:root[data-theme="light"] .file-list::-webkit-scrollbar-thumb,
+:root[data-theme="light"] .log::-webkit-scrollbar-thumb { background: #c9d8e8; }
+:root[data-theme="light"] .file-list::-webkit-scrollbar-thumb:hover,
+:root[data-theme="light"] .log::-webkit-scrollbar-thumb:hover { background: #a9c2da; }
